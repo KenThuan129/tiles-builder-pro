@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/static/css/main.d9ccadf8.css",
-    "main.js": "/static/js/main.27c4e93d.js",
-    "static/js/453.ecdeb650.chunk.js": "/static/js/453.ecdeb650.chunk.js",
-    "index.html": "/index.html",
-    "main.d9ccadf8.css.map": "/static/css/main.d9ccadf8.css.map",
-    "main.27c4e93d.js.map": "/static/js/main.27c4e93d.js.map",
-    "453.ecdeb650.chunk.js.map": "/static/js/453.ecdeb650.chunk.js.map"
+    "main.css": "/tiles-builder-pro/static/css/main.d9ccadf8.css",
+    "main.js": "/tiles-builder-pro/static/js/main.bc4e021a.js",
+    "static/js/453.ecdeb650.chunk.js": "/tiles-builder-pro/static/js/453.ecdeb650.chunk.js",
+    "index.html": "/tiles-builder-pro/index.html",
+    "main.d9ccadf8.css.map": "/tiles-builder-pro/static/css/main.d9ccadf8.css.map",
+    "main.bc4e021a.js.map": "/tiles-builder-pro/static/js/main.bc4e021a.js.map",
+    "453.ecdeb650.chunk.js.map": "/tiles-builder-pro/static/js/453.ecdeb650.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.d9ccadf8.css",
-    "static/js/main.27c4e93d.js"
+    "static/js/main.bc4e021a.js"
   ]
 }
