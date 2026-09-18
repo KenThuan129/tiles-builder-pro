@@ -23,6 +23,9 @@ A React-based level design and balance analytics tool for a tile-matching puzzle
 
 The Tiles Match Tool is a single-page builder with three panels:
 
+<img width="1916" height="980" alt="image" src="https://github.com/user-attachments/assets/7706555e-d5cd-4ac2-a9ac-f17bc50f6c76" />
+
+
 | Panel | Purpose |
 |---|---|
 | **Left — Builder Tools** | Place tiles, gifts, special mechanics; configure difficulty mods, distribution patterns, icon ratios, and boosters. |
@@ -68,6 +71,9 @@ The number of non-gift tiles must be divisible by 3 (`matchableCount % 3 === 0`)
 
 Click **Suggest Level** in the top-left of the Builder Tools panel, then set parameters:
 
+<img width="1917" height="971" alt="image" src="https://github.com/user-attachments/assets/ebda72d5-c94e-460e-9c2a-ed06db645f99" />
+
+
 | Field | Meaning | Recommended |
 |---|---|---|
 | Target Tile Count | Total matchable tiles (auto-floored to multiple of 3) | 30–60 |
@@ -91,13 +97,24 @@ Click **Generate & Spawn Level**.
 
 Use the layer controls and tool selector:
 
+<img width="403" height="135" alt="image" src="https://github.com/user-attachments/assets/8a6ad044-2b76-496c-b0df-2b42c0eb0cbe" />
+
 - **Z-Layer selector (0–5)** — choose which layer to edit.
 - **Layer View Mode:**
   - `All` — show every layer, active layer highlighted.
+<img width="1487" height="735" alt="image" src="https://github.com/user-attachments/assets/4390920b-8c19-417b-8361-7d5176b1d1ea" />
+
   - `Stack` (cumulative) — show layers ≤ active layer (build-up preview).
+<img width="1491" height="573" alt="image" src="https://github.com/user-attachments/assets/fd46c2d9-bfc5-456d-8d4c-8434272e3959" />
+
   - `Solo` (isolated) — show only the active layer (clean check).
+<img width="1452" height="562" alt="image" src="https://github.com/user-attachments/assets/8b580ebf-9af8-4546-9d5d-d6938110cf37" />
+
 - **Place / Erase toggle** — click the grid to add/remove tiles.
+<img width="395" height="61" alt="image" src="https://github.com/user-attachments/assets/6e43e8c0-047d-44ff-a636-cefbdd323f34" />
+  
 - **Special Mechanic grid** — pick a mechanic before placing. The next tile placed gets that mechanic.
+<img width="397" height="306" alt="image" src="https://github.com/user-attachments/assets/f850d12f-697c-42e6-aed8-5b22c2277803" />
 
 ### 1.3 Place special mechanics
 
@@ -131,6 +148,8 @@ A gift is **revealed** (goal complete) only when no tile above its layer overlap
 1. Ensure the matchable tile count is a multiple of 3 (the red warning disappears).
 2. Click **Test Level** (green button).
 
+<img width="1917" height="977" alt="image" src="https://github.com/user-attachments/assets/29e571e5-7eb6-44cb-abd8-b25c47c40975" />
+
 The builder then:
 
 1. Resolves all special mechanics.
@@ -161,6 +180,8 @@ Each press decrements the corresponding counter.
 ### 2.4 Live difficulty tracking
 
 The right panel remains visible during play (toggle with Show / Hide):
+
+<img width="425" height="973" alt="image" src="https://github.com/user-attachments/assets/a2489b31-3707-40ab-b724-2b362e715545" />
 
 - **MAI Live card** shows two values:
   - `Theory` — `difficultyStats.mai` computed from the current board.
