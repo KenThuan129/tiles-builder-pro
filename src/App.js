@@ -7,6 +7,15 @@ import {
   Upload, FileJson, AlertCircle, Gift
 } from 'lucide-react';
 
+const VIEWPORT_PRESETS = {
+  default: { label: 'Default', width: 480, cellSize: 20 },
+  mobile:  { label: 'Mobile',  width: 320, cellSize: 20 },
+  tablet:  { label: 'Tablet',  width: 640, cellSize: 20 },
+  desktop: { label: 'Desktop', width: 800, cellSize: 20 },
+};
+
+const INTRINSIC_BOARD_SIZE = 480;
+
 // --- CONFIGURATION & WEIGHTS ---
 const WEIGHTS = {
   tileCount: { base: 0.05, earlyLevel: 0.03, highCount: 0.08 },
@@ -96,6 +105,114 @@ const GIFT_LAYERS = [0.5, 1.5, 2.5, 3.5, 4.5];
 const BYTES_VERSION = "1.0";
 const BYTES_ID_RANGE_START = 1001;
 const BYTES_ID_RANGE_END = 1020;
+const BOOSTER_TYPES = {
+  undo: {
+    label: 'Undo',
+    description: 'Revert last tile from tray',
+    weight: -0.4,
+    category: 'tray',
+    diminishing: false
+  },
+  magnet: {
+    label: 'Magnet',
+    description: 'Create free match with tray tiles',
+    weight: -0.8,
+    category: 'tray',
+    diminishing: false
+  },
+  swap: {
+    label: 'Swap',
+    description: 'Shuffle all icons (keep layout)',
+    weight: -1.5,
+    category: 'board',
+    diminishing: true
+  },
+  slotExpand: {
+    label: 'Slot Expand',
+    description: '+1 tray slot until level ends',
+    weight: -1.2,
+    category: 'tray',
+    diminishing: false
+  }
+};
+
+// Base booster availability cho từng preset
+const BOOSTER_PRESETS = {
+  none: {
+    label: 'None (Levels 1-10)',
+    availability: { undo: 0, magnet: 0, swap: 0, slotExpand: 0 }
+  },
+  forgiving: {
+    label: 'Forgiving (Levels 11-30)',
+    availability: { undo: 3, magnet: 2, swap: 2, slotExpand: 2 }
+  },
+  balance: {
+    label: 'Balance (Levels 11-30)',
+    availability: { undo: 2, magnet: 1, swap: 1, slotExpand: 1 }
+  },
+  tryHard: {
+    label: 'Try-hard (Levels 11-30)',
+    availability: { undo: 1, magnet: 1, swap: 1, slotExpand: 0 }
+  },
+  standard: {
+    label: 'Standard (Levels 31+)',
+    availability: { undo: 2, magnet: 1, swap: 1, slotExpand: 0 }
+  },
+  custom: {
+    label: 'Custom',
+    availability: null
+  }
+};
+
+// Cap cho accumulator inventory theo level band
+const BOOSTER_CAPS = {
+  '11-30':  { undo: 5,  magnet: 3,  swap: 3,  slotExpand: 2 },
+  '31-50':  { undo: 7,  magnet: 4,  swap: 4,  slotExpand: 3 },
+  '51-80':  { undo: 10, magnet: 6,  swap: 6,  slotExpand: 4 },
+  '81-120': { undo: 15, magnet: 8,  swap: 8,  slotExpand: 5 },
+  '121+':   { undo: 20, magnet: 10, swap: 10, slotExpand: 6 }
+};
+
+// Median inventory (giả định trung bình player có khi vào level)
+const BOOSTER_MEDIANS = {
+  '11-30':  { undo: 1,  magnet: 0, swap: 0, slotExpand: 0 },
+  '31-50':  { undo: 3,  magnet: 1, swap: 1, slotExpand: 0 },
+  '51-80':  { undo: 5,  magnet: 2, swap: 2, slotExpand: 1 },
+  '81-120': { undo: 8,  magnet: 4, swap: 3, slotExpand: 2 },
+  '121+':   { undo: 10, magnet: 5, swap: 4, slotExpand: 3 }
+};
+
+// Helper: determine band from level number
+const getBoosterBand = (levelNum) => {
+  if (levelNum <= 10) return '1-10';
+  if (levelNum <= 30) return '11-30';
+  if (levelNum <= 50) return '31-50';
+  if (levelNum <= 80) return '51-80';
+  if (levelNum <= 120) return '81-120';
+  return '121+';
+};
+
+// Helper: calculate booster relief from availability object
+const calculateBoosterRelief = (availability) => {
+  if (!availability) return 0;
+  let relief = 0;
+  Object.entries(availability).forEach(([type, count]) => {
+    if (count <= 0) return;
+    const config = BOOSTER_TYPES[type];
+    if (!config) return;
+    if (config.diminishing) {
+      relief += config.weight * Math.sqrt(count);
+    } else {
+      relief += config.weight * count;
+    }
+  });
+  return relief;
+};
+
+// Helper: calculate booster multiplier from relief
+const calculateBoosterMultiplier = (relief) => {
+  return 1 + (relief / 10);
+};
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -237,6 +354,204 @@ const resolveSpecialMechanics = (rawTiles) => {
   });
 
   return workingTiles;
+};
+
+// ============================================================
+// BOOSTER HELPERS
+// ============================================================
+
+/**
+ * Count initial matches on the board.
+ * Match = 3+ free tiles with same (icon, color).
+ * Free tile = tappable ngay (không bị cover, không bị lock).
+ */
+const countInitialMatches = (boardTiles) => {
+  const freeTiles = boardTiles.filter(t => 
+    !t.isGift && isTileFree(t, boardTiles)
+  );
+  
+  const groups = {};
+  freeTiles.forEach(t => {
+    const key = `${t.baseIcon}_${t.color}`;
+    groups[key] = (groups[key] || 0) + 1;
+  });
+  
+  return Object.values(groups).filter(count => count >= 3).length;
+};
+
+/**
+ * Find Magnet target tile.
+ * Priority:
+ *   1. z nhỏ nhất (layer thấp nhất)
+ *   2. x lớn nhất (phải)
+ *   3. y nhỏ nhất (trên)
+ */
+const findMagnetTargets = (boardTiles, container) => {
+  // ═══════════════════════════════════════════════════════════
+  // Sort function for board tiles priority:
+  //   1. z nhỏ nhất (layer thấp nhất)
+  //   2. x lớn nhất (phải)
+  //   3. y nhỏ nhất (trên)
+  // ═══════════════════════════════════════════════════════════
+  const sortByPriority = (tiles) => {
+    return [...tiles].sort((a, b) => {
+      if (a.z !== b.z) return a.z - b.z;
+      if (a.x !== b.x) return b.x - a.x;
+      return a.y - b.y;
+    });
+  };
+  
+  // ═══════════════════════════════════════════════════════════
+  // LEVEL 1: Tray has tiles → find matching board tile
+  // ═══════════════════════════════════════════════════════════
+  if (container.length > 0) {
+    // Find highest-count (icon, color) in tray
+    // Priority: highest count → latest in tray
+    const trayCounts = {};
+    const trayLatestIdx = {};
+    container.forEach((t, idx) => {
+      const key = `${t.baseIcon}_${t.color}`;
+      trayCounts[key] = (trayCounts[key] || 0) + 1;
+      trayLatestIdx[key] = idx;
+    });
+    
+    const sortedKeys = Object.keys(trayCounts).sort((a, b) => {
+      if (trayCounts[b] !== trayCounts[a]) return trayCounts[b] - trayCounts[a];
+      return trayLatestIdx[b] - trayLatestIdx[a];
+    });
+    
+    // Try each tray key by priority — find first one with board candidates
+    for (const targetKey of sortedKeys) {
+      const [targetIcon, targetColor] = targetKey.split('_');
+      
+      const candidates = boardTiles.filter(t => 
+        !t.isGift && 
+        t.baseIcon === targetIcon && 
+        t.color === targetColor &&
+        isTileFree(t, boardTiles)
+      );
+      
+      if (candidates.length > 0) {
+        const sorted = sortByPriority(candidates);
+        return {
+          tilesToPull: [sorted[0]],
+          matchedFromTray: true
+        };
+      }
+    }
+    
+    // ═══════════════════════════════════════════════════════════
+    // LEVEL 2: Tray has 2+ tiles of same (icon,color) but no board match
+    // → Try to find board tile matching any tray pair
+    // (This is actually same as Level 1 — already covered)
+    // ═══════════════════════════════════════════════════════════
+    // If we're here, no tray tile has board match. Fall through to Level 3.
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // LEVEL 3: Pure board match — find 3 tiles with same (icon,color)
+  // Then pull 2 of them to tray, effectively creating a match with the 3rd
+  // (Or: if tray is empty, pull 3 tiles at once)
+  // ═══════════════════════════════════════════════════════════
+  
+  // Group free board tiles by (icon, color)
+  const freeTiles = boardTiles.filter(t => !t.isGift && isTileFree(t, boardTiles));
+  const groups = {};
+  freeTiles.forEach(t => {
+    const key = `${t.baseIcon}_${t.color}`;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  });
+  
+  // Find first group with >= 3 tiles (prioritize by board position)
+  const validKeys = Object.keys(groups).filter(k => groups[k].length >= 3);
+  
+  if (validKeys.length > 0) {
+    // Sort keys by their best tile position (for determinism)
+    const sortedKeys = validKeys.sort((a, b) => {
+      const aBest = sortByPriority(groups[a])[0];
+      const bBest = sortByPriority(groups[b])[0];
+      if (aBest.z !== bBest.z) return aBest.z - bBest.z;
+      if (aBest.x !== bBest.x) return bBest.x - aBest.x;
+      return aBest.y - bBest.y;
+    });
+    
+    const chosenKey = sortedKeys[0];
+    const sortedGroup = sortByPriority(groups[chosenKey]);
+    
+    // How many tiles to pull depends on how many we need to complete a match
+    // If tray is empty → pull 3 tiles (creates immediate match)
+    // If tray has N tiles of this key → pull (3 - N) tiles
+    const [targetIcon, targetColor] = chosenKey.split('_');
+    const trayCount = container.filter(t => 
+      t.baseIcon === targetIcon && t.color === targetColor
+    ).length;
+    
+    const tilesNeeded = Math.max(0, 3 - trayCount);
+    const tilesToPull = sortedGroup.slice(0, tilesNeeded);
+    
+    if (tilesToPull.length > 0) {
+      return {
+        tilesToPull,
+        matchedFromTray: trayCount > 0
+      };
+    }
+  }
+  
+  // ═══════════════════════════════════════════════════════════
+  // LEVEL 4 (last resort): No free group has 3+ tiles
+  // → Pull 1 tile from board into tray (doesn't create match, but clears board)
+  // Not ideal but prevents Magnet from doing nothing
+  // ═══════════════════════════════════════════════════════════
+  if (freeTiles.length > 0) {
+    const sorted = sortByPriority(freeTiles);
+    return {
+      tilesToPull: [sorted[0]],
+      matchedFromTray: false,
+      noMatch: true
+    };
+  }
+  
+  // Nothing to pull — board is empty or all locked
+  return null;
+};
+
+/**
+ * Shuffle icons across tiles, keep layout (x, y, z).
+ * Ensure new initial matches >= target.
+ */
+const shuffleIcons = (boardTiles, targetMatches) => {
+  const nonGiftTiles = boardTiles.filter(t => !t.isGift);
+  
+  // Extract all (icon, color) pairs
+  const pairs = nonGiftTiles.map(t => ({ icon: t.baseIcon, color: t.color }));
+  
+  let bestBoard = null;
+  let bestMatchCount = -1;
+  
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const shuffled = [...pairs].sort(() => Math.random() - 0.5);
+    
+    let idx = 0;
+    const candidateBoard = boardTiles.map(t => {
+      if (t.isGift) return t;
+      const newPair = shuffled[idx++];
+      return { ...t, baseIcon: newPair.icon, color: newPair.color };
+    });
+    
+    const matchCount = countInitialMatches(candidateBoard);
+    
+    if (matchCount >= targetMatches) {
+      return candidateBoard; // Good enough
+    }
+    
+    if (matchCount > bestMatchCount) {
+      bestMatchCount = matchCount;
+      bestBoard = candidateBoard;
+    }
+  }
+  
+  return bestBoard; // Best effort after 100 attempts
 };
 
 // ============================================================
@@ -399,6 +714,7 @@ export default function App() {
   const [mode, setMode] = useState('edit');
   const [levelNum, setLevelNum] = useState(1);
   const [tiles, setTiles] = useState([]);
+  const [viewportPreset, setViewportPreset] = useState('tablet');
 
   const [activeLayer, setActiveLayer] = useState(0);
   const [activeGiftLayer, setActiveGiftLayer] = useState(0.5)
@@ -421,6 +737,17 @@ export default function App() {
   const [importPreview, setImportPreview] = useState(null);
 
   const [iconColorRatio, setIconColorRatio] = useState({ themeIconRatio: 85, colorIconRatio: 15 });
+  const [boosterPreset, setBoosterPreset] = useState('none');
+  const [boosterCustom, setBoosterCustom] = useState({
+    undo: 0,
+    magnet: 0,
+    swap: 0,
+    slotExpand: 0
+  });
+  // Current base availability (for UI display)
+  const baseAvailability = boosterPreset === 'custom'
+    ? boosterCustom
+    : (BOOSTER_PRESETS[boosterPreset]?.availability || { undo: 0, magnet: 0, swap: 0, slotExpand: 0 });
 
   const [suggestParams, setSuggestParams] = useState({
     targetTiles: 45,
@@ -447,9 +774,18 @@ export default function App() {
   const [playTiles, setPlayTiles] = useState([]);
   const [container, setContainer] = useState([]);
   const [gameState, setGameState] = useState('playing');
+  const [boosterInventory, setBoosterInventory] = useState({
+    undo: 0, magnet: 0, swap: 0, slotExpand: 0
+  });
+  const [slotExpandUsed, setSlotExpandUsed] = useState(0);
+  const [showAnalyticsInPlay, setShowAnalyticsInPlay] = useState(true);
 
   const matchableCount = tiles.filter(t => !t.isGift).length;
   const isPlayable = matchableCount > 0 && matchableCount % 3 === 0;
+
+  const boardScale = useMemo(() => {
+    return VIEWPORT_PRESETS[viewportPreset].width / INTRINSIC_BOARD_SIZE;
+  }, [viewportPreset]);
 
   // Sync default icon ratios when distribution pattern changes
   useEffect(() => {
@@ -755,10 +1091,120 @@ export default function App() {
     setEventItemsCollected(0);
     setGiftsRevealed(0);
     setPlayTiles([...initializedPlayTiles, ...giftTiles]);
+    setBoosterInventory({ ...baseAvailability });
+    setSlotExpandUsed(0);
   };
 
   const stopPlayMode = () => {
     setMode('edit');
+  };
+
+  const handleUndo = () => {
+    if (mode !== 'play' || gameState !== 'playing') return;
+    if (boosterInventory.undo <= 0) return;
+    if (container.length === 0) return;
+    
+    // Get latest tile from tray
+    const lastTile = container[container.length - 1];
+    
+    // Restore to board (x, y, z preserved from when it entered tray)
+    setPlayTiles([...playTiles, lastTile]);
+    setContainer(container.slice(0, -1));
+    setBoosterInventory({ ...boosterInventory, undo: boosterInventory.undo - 1 });
+  };
+
+  const handleMagnet = () => {
+    if (mode !== 'play' || gameState !== 'playing') return;
+    if (boosterInventory.magnet <= 0) return;
+    // ← XÓA check container.length === 0 — giờ Magnet chạy được cả khi tray rỗng
+    
+    const result = findMagnetTargets(playTiles, container);
+    if (!result || result.tilesToPull.length === 0) {
+      alert('Không có tile nào trên board để Magnet pull.');
+      return;
+    }
+    
+    // Start from current state
+    let workingBoard = [...playTiles];
+    let workingContainer = [...container];
+    
+    // Pull each tile from board → tray
+    result.tilesToPull.forEach(tileToPull => {
+      // Remove from board
+      workingBoard = workingBoard.filter(t => t.id !== tileToPull.id);
+      
+      // Add to tray (insert after matching tile if exists)
+      const matchIndex = workingContainer.findLastIndex(t => 
+        t.baseIcon === tileToPull.baseIcon && t.color === tileToPull.color
+      );
+      if (matchIndex !== -1) {
+        workingContainer.splice(matchIndex + 1, 0, tileToPull);
+      } else {
+        workingContainer.push(tileToPull);
+      }
+    });
+    
+    // Check for match(es) → remove all matches found
+    let anyMatchOccurred = false;
+    let loopGuard = 0;
+    while (loopGuard++ < 10) {
+      let foundMatch = false;
+      for (let i = 0; i <= workingContainer.length - 3; i++) {
+        if (
+          workingContainer[i].baseIcon === workingContainer[i + 1].baseIcon &&
+          workingContainer[i].baseIcon === workingContainer[i + 2].baseIcon &&
+          workingContainer[i].color === workingContainer[i + 1].color &&
+          workingContainer[i].color === workingContainer[i + 2].color
+        ) {
+          workingContainer.splice(i, 3);
+          anyMatchOccurred = true;
+          foundMatch = true;
+          break;
+        }
+      }
+      if (!foundMatch) break;
+    }
+    
+    setPlayTiles(workingBoard);
+    setContainer(workingContainer);
+    setBoosterInventory({ ...boosterInventory, magnet: boosterInventory.magnet - 1 });
+    
+    // Check win/loss
+    const remainingTiles = workingBoard.filter(t => !t.isGift);
+    const remainingGifts = workingBoard.filter(t => t.isGift);
+    const totalGiftsInLevel = playTiles.filter(t => t.isGift).length;
+    const allGiftsRevealed = totalGiftsInLevel > 0 && remainingGifts.length === 0;
+    const trayMax = 7 + slotExpandUsed;
+    
+    if (workingContainer.length >= trayMax) {
+      setGameState('lost');
+    } else if (totalGiftsInLevel > 0) {
+      if (allGiftsRevealed) setGameState('won');
+    } else {
+      if (remainingTiles.length === 0) setGameState('won');
+    }
+  };
+
+  const handleSwap = () => {
+    if (mode !== 'play' || gameState !== 'playing') return;
+    if (boosterInventory.swap <= 0) return;
+    
+    const currentMatches = countInitialMatches(playTiles);
+    const targetMatches = Math.max(1, currentMatches - 2);
+    
+    const newBoard = shuffleIcons(playTiles, targetMatches);
+    if (!newBoard) return;
+    
+    setPlayTiles(newBoard);
+    setBoosterInventory({ ...boosterInventory, swap: boosterInventory.swap - 1 });
+  };
+
+  const handleSlotExpand = () => {
+    if (mode !== 'play' || gameState !== 'playing') return;
+    if (boosterInventory.slotExpand <= 0) return;
+    
+    setSlotExpandUsed(prev => prev + 1);
+    setBoosterInventory(prev => ({ ...prev, slotExpand: prev.slotExpand - 1 }));
   };
 
   const handleTileClick = (tile) => {
@@ -894,7 +1340,9 @@ export default function App() {
     const totalGiftsInLevel = giftsInLevel.length;
     const allGiftsRevealed = totalGiftsInLevel > 0 && remainingGifts.length === 0;
 
-    if (workingContainer.length >= 7) {
+    const trayMax = 7 + slotExpandUsed;
+
+    if (workingContainer.length >= trayMax) {
       setGameState('lost');
     } else if (totalGiftsInLevel > 0) {
       if (allGiftsRevealed) setGameState('won');
@@ -1111,9 +1559,11 @@ export default function App() {
     ? Math.max(...sortedSerializedItems.map(t => t.z))
     : 0;
 
-  // ─────────────────────────────────────────────────────────────
-  // STEP 8: Return payload
-  // ─────────────────────────────────────────────────────────────
+  // baseAvailability đã được khai báo ở component scope — không cần khai báo lại
+  const boosterBand = getBoosterBand(levelNum);
+  const boosterCap = BOOSTER_CAPS[boosterBand] || null;
+  const boosterMedian = BOOSTER_MEDIANS[boosterBand] || null;
+
   return {
     level_id: levelNum,
     difficulty: {
@@ -1124,16 +1574,27 @@ export default function App() {
       initial_matches_on_start: modConfig.startingMatches,
       multiplier: modConfig.multiplier
     },
+    boosters: {
+      preset: boosterPreset,
+      availability: baseAvailability,
+      band: boosterBand,
+      economy: boosterCap ? {
+        cap: boosterCap,
+        median: boosterMedian,
+        rewardEasyMedium: { undo: 1 },
+        rewardHardPlus: { magnet: 1, swap: 1 }
+      } : null
+    },
     map_info: {
       total_tiles: totalTilesCount,
       total_gifts: totalGiftsCount,
       total_event_items: totalEventItemsCount,
-      max_z_layers: maxZ + 1,     // +1 because z is 0-indexed (max z=4 → 5 layers)
+      max_z_layers: maxZ + 1,
       tiles: sortedSerializedItems
     },
-    dev_note: "Generated via TilesBuilderTester Engine. Gifts are separate goal entities on fractional gift layers (0.5, 1.5, ...). Tiles use integer layers. Event Items require 4 matches; award 2 points while active, 1 point after."
+    dev_note: "Generated via TilesBuilderTester Engine. Gifts are separate goal entities on fractional gift layers (0.5, 1.5, ...). Tiles use integer layers. Event Items require 4 matches; award 2 points while active, 1 point after. Boosters follow base + accumulator model."
   };
-}, [tiles, levelNum, difficultyMod, difficultyMods, distributionPattern, iconColorRatio]);
+}, [tiles, levelNum, difficultyMod, difficultyMods, distributionPattern, iconColorRatio, boosterPreset, boosterCustom]);
 
   const buildBytesPayload = useMemo(() => {
     try {
@@ -1217,12 +1678,37 @@ export default function App() {
   const difficultyStats = useMemo(() => {
     const allTiles = mode === 'play' ? playTiles : tiles;
     const activeTiles = allTiles.filter(t => !t.isGift);
+    const band = getBoosterBand(levelNum);
+    const defaultBaseRelief = calculateBoosterRelief(baseAvailability);
+    const defaultBaseMultiplier = calculateBoosterMultiplier(defaultBaseRelief);
+    const defaultMedianInventory = BOOSTER_MEDIANS[band] || { undo: 0, magnet: 0, swap: 0, slotExpand: 0 };
+    const defaultMedianRelief = calculateBoosterRelief(defaultMedianInventory);
+    const defaultMedianMultiplier = calculateBoosterMultiplier(defaultMedianRelief);
+    const defaultCapInventory = BOOSTER_CAPS[band] || { undo: 0, magnet: 0, swap: 0, slotExpand: 0 };
+    const defaultCapRelief = calculateBoosterRelief(defaultCapInventory);
+    const defaultCapMultiplier = calculateBoosterMultiplier(defaultCapRelief);
+    
     const defaultStats = {
       total: 0, staticTotal: 0, coreSubtotal: 0, specialSubtotal: 0,
       breakdown: { tileCount: 0, icons: 0, colors: 0, stackCovers: 0, diagCovers: 0, mechanics: 0, maiPenalty: 0 },
       mai: WEIGHTS.mai.sweetSpot.toFixed(2),
       startingMatchesCount: 0, stackCoversCount: 0, diagCoversCount: 0,
-      iconQuantities: {}, colorQuantities: {}, mechanicCounts: {}
+      iconQuantities: {}, colorQuantities: {}, mechanicCounts: {},
+      
+      // ─── Booster fields (để tránh undefined khi render) ───
+      boosterBand: band,
+      baseRelief: defaultBaseRelief,
+      baseMultiplier: defaultBaseMultiplier,
+      baseBoosterScore: 0,
+      medianRelief: defaultMedianRelief,
+      medianMultiplier: defaultMedianMultiplier,
+      medianBoosterScore: 0,
+      capRelief: defaultCapRelief,
+      capMultiplier: defaultCapMultiplier,
+      capBoosterScore: 0,
+      baseAvailability,
+      medianInventory: defaultMedianInventory,
+      capInventory: defaultCapInventory
     };
 
     if (!activeTiles || activeTiles.length === 0) return defaultStats;
@@ -1312,16 +1798,51 @@ export default function App() {
     }
 
     const totalRaw = staticTotal + breakdown.maiPenalty;
-    const finalScore = totalRaw * modConfig.multiplier;
+    const staticWithMod = totalRaw * modConfig.multiplier;
+
+    const baseRelief = calculateBoosterRelief(baseAvailability);
+    const baseMultiplier = calculateBoosterMultiplier(baseRelief);
+    const baseBoosterScore = staticWithMod * baseMultiplier;
+
+    // Effective (Median) — giả định player trung bình
+    const medianInventory = BOOSTER_MEDIANS[band] || { undo: 0, magnet: 0, swap: 0, slotExpand: 0 };
+    const medianRelief = calculateBoosterRelief(medianInventory);
+    const medianMultiplier = calculateBoosterMultiplier(medianRelief);
+    const medianBoosterScore = staticWithMod * medianMultiplier;
+
+    // Effective (Cap) — giả định player chăm chỉ, full inventory
+    const capInventory = BOOSTER_CAPS[band] || { undo: 0, magnet: 0, swap: 0, slotExpand: 0 };
+    const capRelief = calculateBoosterRelief(capInventory);
+    const capMultiplier = calculateBoosterMultiplier(capRelief);
+    const capBoosterScore = staticWithMod * capMultiplier;
+
+    // Legacy: finalScore giữ nguyên để backward-compatible với UI hiện tại
+    const finalScore = staticWithMod;
 
     return {
-      total: finalScore, staticTotal, coreSubtotal, specialSubtotal, breakdown,
+      total: finalScore,                          // giữ nguyên cho backward compat
+      staticTotal, coreSubtotal, specialSubtotal, breakdown,
       mai: mai.toFixed(2),
       startingMatchesCount: modConfig.startingMatches,
-      stackCoversCount, diagCoversCount, iconQuantities, colorQuantities, mechanicCounts
+      stackCoversCount, diagCoversCount,
+      iconQuantities, colorQuantities, mechanicCounts,
+      
+      // NEW: Booster data
+      boosterBand: band,
+      baseRelief,
+      baseMultiplier,
+      baseBoosterScore,
+      medianRelief,
+      medianMultiplier,
+      medianBoosterScore,
+      capRelief,
+      capMultiplier,
+      capBoosterScore,
+      baseAvailability,
+      medianInventory,
+      capInventory
     };
-  }, [tiles, playTiles, mode, levelNum, difficultyMod, difficultyMods, distributionPattern, hybridSub1, hybridSub2, iconColorRatio]);
-
+  }, [tiles, playTiles, mode, levelNum, difficultyMod, difficultyMods, distributionPattern, hybridSub1, hybridSub2, iconColorRatio, boosterPreset, boosterCustom]);
     const validateImportJson = (jsonString) => {
       const errors = [];
       let parsed = null;
@@ -2105,6 +2626,52 @@ export default function App() {
             )}
           </div>
 
+          <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-700/60 space-y-2">
+            <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1">
+              <Zap className="w-3 h-3" /> Booster Preset
+            </label>
+            
+            <select 
+              value={boosterPreset} 
+              onChange={(e) => setBoosterPreset(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-white outline-none focus:border-amber-500 text-xs font-medium"
+            >
+              {Object.entries(BOOSTER_PRESETS).map(([k, v]) => (
+                <option key={k} value={k}>{v.label}</option>
+              ))}
+            </select>
+            
+            {boosterPreset === 'custom' && (
+              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800 mt-2">
+                {Object.entries(BOOSTER_TYPES).map(([key, config]) => (
+                  <div key={key} className="flex flex-col">
+                    <span className="text-[9px] text-slate-400 mb-0.5">{config.label}</span>
+                    <input 
+                      type="number" 
+                      min="0" 
+                      max="20"
+                      value={boosterCustom[key]}
+                      onChange={(e) => {
+                        const val = Math.max(0, parseInt(e.target.value) || 0);
+                        setBoosterCustom(prev => ({ ...prev, [key]: val }));
+                      }}
+                      className="w-full bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-amber-400 font-bold text-center text-xs outline-none"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {boosterPreset !== 'custom' && baseAvailability && (
+              <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-400 mt-2 pt-2 border-t border-slate-800">
+                <div>Undo: <strong className="text-white font-mono">{baseAvailability.undo}</strong></div>
+                <div>Magnet: <strong className="text-white font-mono">{baseAvailability.magnet}</strong></div>
+                <div>Swap: <strong className="text-white font-mono">{baseAvailability.swap}</strong></div>
+                <div>Slot: <strong className="text-white font-mono">{baseAvailability.slotExpand}</strong></div>
+              </div>
+            )}
+          </div>
+
           <button onClick={() => setTiles([])} className="w-full mt-1 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/40 rounded border border-red-900/50 transition-colors font-medium">
             Clear Board
           </button>
@@ -2128,7 +2695,7 @@ export default function App() {
                 
                 {/* 7-slot grid */}
                 <div className="flex gap-2">
-                  {[...Array(7)].map((_, i) => (
+                  {[...Array(7 + slotExpandUsed)].map((_, i) => (
                     <div key={i} className="w-10 h-10 bg-slate-800 rounded shadow-inner border border-slate-900 relative">
                       {container[i] && (
                         container[i].mechanic === 'eventItem' ? (
@@ -2168,39 +2735,73 @@ export default function App() {
                         </span>
                       </div>
                     )}
+                    
                   </div>
                 )}
-
               </div>
             </div>
           )}
           <div className="flex gap-3 items-center">
-            <button onClick={() => setIsImportModalOpen(true)}
-              className="flex items-center gap-1.5 bg-purple-500/20 border border-purple-500/40 hover:bg-purple-500/30 text-purple-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
-              <Upload className="w-4 h-4" /> Import JSON
-            </button>
-            <button onClick={() => setIsExportModalOpen(true)}
-              className="flex items-center gap-1.5 bg-cyan-500/20 border border-cyan-500/40 hover:bg-cyan-500/30 text-cyan-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
-              <Download className="w-4 h-4" /> Export Level JSON
-            </button>
-            <button onClick={() => setIsBytesModalOpen(true)}
-              className="flex items-center gap-1.5 bg-orange-500/20 border border-orange-500/40 hover:bg-orange-500/30 text-orange-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
-              <Download className="w-4 h-4" /> Export .bytes
-            </button>
+            <div className="flex bg-slate-900/80 rounded-lg p-0.5 border border-slate-700/50">
+              {Object.entries(VIEWPORT_PRESETS).map(([key, preset]) => (
+                <button
+                  key={key}
+                  onClick={() => setViewportPreset(key)}
+                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${
+                    viewportPreset === key
+                      ? 'bg-cyan-500 text-slate-950'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            {mode === 'edit' && (
+                <>
+                  <button onClick={() => setIsImportModalOpen(true)}
+                    className="flex items-center gap-1.5 bg-purple-500/20 border border-purple-500/40 hover:bg-purple-500/30 text-purple-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
+                    <Upload className="w-4 h-4" /> Import JSON
+                  </button>
+                  <button onClick={() => setIsExportModalOpen(true)}
+                    className="flex items-center gap-1.5 bg-cyan-500/20 border border-cyan-500/40 hover:bg-cyan-500/30 text-cyan-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
+                    <Download className="w-4 h-4" /> Export Level JSON
+                  </button>
+                  <button onClick={() => setIsBytesModalOpen(true)}
+                    className="flex items-center gap-1.5 bg-orange-500/20 border border-orange-500/40 hover:bg-orange-500/30 text-orange-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
+                    <Download className="w-4 h-4" /> Export .bytes
+                  </button>
+                </>
+            )}
+            
             {mode === 'edit' ? (
               <button onClick={isPlayable ? startPlayMode : undefined}
                 className={`flex items-center gap-2 font-bold px-6 py-2 rounded-lg transition-all ${isPlayable ? 'bg-green-500 hover:bg-green-400 text-slate-900 shadow-lg shadow-green-500/20' : 'bg-slate-600 text-slate-400 cursor-not-allowed'}`}>
                 <Play className="w-4 h-4" /> Test Level
               </button>
             ) : (
-              <button onClick={stopPlayMode} className="flex items-center gap-2 bg-slate-600 hover:bg-slate-500 text-white font-bold px-6 py-2 rounded-lg shadow-lg transition-all">
-                <Square className="w-4 h-4" /> Stop Testing
-              </button>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setShowAnalyticsInPlay(!showAnalyticsInPlay)}
+                  title={showAnalyticsInPlay ? 'Hide Analytics Panel' : 'Show Analytics Panel'}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all border ${
+                    showAnalyticsInPlay 
+                      ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30' 
+                      : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
+                  }`}
+                >
+                  <Activity className="w-4 h-4" />
+                  {showAnalyticsInPlay ? 'Hide' : 'Show'}
+                </button>
+                <button onClick={stopPlayMode} className="flex items-center gap-2 bg-slate-600 hover:bg-slate-500 text-white font-bold px-6 py-2 rounded-lg shadow-lg transition-all">
+                  <Square className="w-4 h-4" /> Stop Testing
+                </button>
+              </div>
             )}
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto flex items-center justify-center relative p-8">
+        <div className="flex-1 overflow-auto flex items-start justify-center relative p-8">
           {mode === 'play' && gameState !== 'playing' && (
             <div className="absolute inset-0 z-[110] bg-slate-900/80 backdrop-blur flex items-center justify-center">
               <div className="bg-slate-800 p-8 rounded-2xl border-2 border-slate-700 text-center shadow-2xl max-w-sm w-full">
@@ -2217,63 +2818,199 @@ export default function App() {
             </div>
           )}
 
-          <div className="relative shadow-2xl"
-            style={{ width: '480px', height: '480px', backgroundImage: 'linear-gradient(to right, #1e293b 1px, transparent 1px), linear-gradient(to bottom, #1e293b 1px, transparent 1px)', backgroundSize: '20px 20px', backgroundColor: '#0f172a' }}>
-            {mode === 'edit' && (
-              <div className="absolute inset-0 z-50"
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const x = Math.floor((e.clientX - rect.left) / 20);
-                  const y = Math.floor((e.clientY - rect.top) / 20);
-                  if (x <= 22 && y <= 22) handleGridClick(x, y);
-                }} />
+          <div className="flex flex-col items-center gap-4">
+            <div
+              className="relative"
+              style={{
+                width: `${INTRINSIC_BOARD_SIZE * boardScale}px`,
+                height: `${INTRINSIC_BOARD_SIZE * boardScale}px`,
+              }}
+            >
+              <div
+                className="relative shadow-2xl origin-top-left"
+                style={{
+                  width: '480px',
+                  height: '480px',
+                  transform: `scale(${boardScale})`,
+                  backgroundImage:
+                    'linear-gradient(to right, #1e293b 1px, transparent 1px), linear-gradient(to bottom, #1e293b 1px, transparent 1px)',
+                  backgroundSize: '20px 20px',
+                  backgroundColor: '#0f172a',
+                }}
+              >
+                {mode === 'edit' && (
+                  <div
+                    className="absolute inset-0 z-50"
+                    onClick={(e) => {
+                      // IMPORTANT: divide by scale so click coords map back to intrinsic 20px grid
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const x = Math.floor((e.clientX - rect.left) / (20 * boardScale));
+                      const y = Math.floor((e.clientY - rect.top) / (20 * boardScale));
+                      if (x <= 22 && y <= 22) handleGridClick(x, y);
+                    }}
+                  />
+                )}
+                {(mode === 'play' ? playTiles : tiles).map(tile => renderTile(tile, mode === 'play'))}
+              </div>
+            </div>
+            {mode === 'play' && (
+              <div className="flex gap-3 bg-slate-800/80 border border-slate-700 rounded-2xl p-2 shadow-lg">
+                {/* Undo */}
+                <button
+                  onClick={handleUndo}
+                  disabled={boosterInventory.undo <= 0 || container.length === 0}
+                  title="Undo: Revert last tile from tray"
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
+                    boosterInventory.undo > 0 && container.length > 0
+                      ? 'bg-blue-500/20 border-2 border-blue-500/50 hover:bg-blue-500/30 hover:scale-105 text-blue-300 cursor-pointer'
+                      : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  <span className="text-[11px] font-bold leading-tight">Undo</span>
+                  <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.undo}</span>
+                </button>
+
+                {/* Magnet */}
+                <button
+                  onClick={handleMagnet}
+                  disabled={boosterInventory.magnet <= 0}
+                  title="Magnet: Create a match (works even with empty tray)"
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
+                    boosterInventory.magnet > 0
+                      ? 'bg-purple-500/20 border-2 border-purple-500/50 hover:bg-purple-500/30 hover:scale-105 text-purple-300 cursor-pointer'
+                      : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  <span className="text-[11px] font-bold leading-tight">Magnet</span>
+                  <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.magnet}</span>
+                </button>
+
+                {/* Swap */}
+                <button
+                  onClick={handleSwap}
+                  disabled={boosterInventory.swap <= 0}
+                  title="Swap: Shuffle all icons"
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
+                    boosterInventory.swap > 0
+                      ? 'bg-amber-500/20 border-2 border-amber-500/50 hover:bg-amber-500/30 hover:scale-105 text-amber-300 cursor-pointer'
+                      : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  <span className="text-[11px] font-bold leading-tight">Swap</span>
+                  <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.swap}</span>
+                </button>
+
+                {/* Slot Expand */}
+                <button
+                  onClick={handleSlotExpand}
+                  disabled={boosterInventory.slotExpand <= 0}
+                  title="Slot Expand: +1 tray slot"
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
+                    boosterInventory.slotExpand > 0
+                      ? 'bg-emerald-500/20 border-2 border-emerald-500/50 hover:bg-emerald-500/30 hover:scale-105 text-emerald-300 cursor-pointer'
+                      : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
+                  }`}
+                >
+                  <span className="text-[11px] font-bold leading-tight">Slot+</span>
+                  <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.slotExpand}</span>
+                </button>
+              </div>
             )}
-            {(mode === 'play' ? playTiles : tiles).map(tile => renderTile(tile, mode === 'play'))}
           </div>
         </div>
       </div>
 
-      <div className="w-80 bg-slate-900 border-l border-slate-800 p-5 flex flex-col h-full overflow-y-auto">
+      <div className={`bg-slate-900 border-l border-slate-800 flex flex-col h-full overflow-y-auto transition-all duration-300 ${
+        mode === 'play' && !showAnalyticsInPlay 
+          ? 'w-0 p-0 border-l-0 overflow-hidden' 
+          : 'w-80 p-5'
+        }`}>
         <div className="flex items-center gap-2 mb-4">
           <Settings className="w-5 h-5 text-cyan-400" />
           <h2 className="text-lg font-bold text-white">Balance Analytics</h2>
         </div>
 
-        <div className="bg-slate-800/90 border border-cyan-500/30 rounded-xl p-3.5 mb-4 shadow-lg relative overflow-hidden">
-          <div className="flex items-center justify-between mb-2">
+        <div className="bg-slate-800/90 border border-cyan-500/30 rounded-xl p-3 mb-3 shadow-lg relative overflow-hidden">
+          <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-1.5">
-              <Activity className="w-4 h-4 text-cyan-400 animate-pulse" />
-              <span className="text-xs font-black text-cyan-300 uppercase tracking-wider">MAI Live</span>
+              <Activity className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+              <span className="text-[10px] font-black text-cyan-300 uppercase tracking-wider">MAI Live</span>
             </div>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
-              {mode === 'play' ? 'Runtime Mode' : 'Editor Mode'}
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+              {mode === 'play' ? 'Runtime' : 'Editor'}
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-center bg-slate-900/70 p-2.5 rounded-lg border border-slate-700/60">
-            <div>
-              <p className="text-[10px] text-slate-400 uppercase font-semibold">Theoretical MAI</p>
-              <p className="text-sm font-mono font-bold text-slate-200">{difficultyStats.mai}</p>
+          <div className="flex items-center justify-between bg-slate-900/70 px-2.5 py-1.5 rounded-lg border border-slate-700/60">
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 text-[9px] uppercase font-bold">Theory</span>
+              <span className="font-mono font-bold text-slate-200 text-xs">{difficultyStats.mai}</span>
             </div>
-            <div>
-              <p className="text-[10px] text-slate-400 uppercase font-semibold">Actual Live MAI</p>
-              <p className={`text-sm font-mono font-bold ${
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 text-[9px] uppercase font-bold">Live</span>
+              <span className={`font-mono font-bold text-xs ${
                 Math.abs(parseFloat(mode === 'play' ? (playTiles.filter(t => isTileFree(t, playTiles)).length / Math.max(1, difficultyMods[difficultyMod].variants)).toFixed(2) : difficultyStats.mai) - parseFloat(difficultyStats.mai)) > 0.5
                   ? 'text-orange-400' : 'text-green-400'
               }`}>
                 {mode === 'play'
                   ? (playTiles.filter(t => isTileFree(t, playTiles)).length / Math.max(1, difficultyMods[difficultyMod].variants)).toFixed(2)
                   : difficultyStats.mai}
-              </p>
+              </span>
             </div>
           </div>
         </div>
 
-        <div className="bg-slate-800 rounded-xl p-5 mb-5 border border-slate-700 shadow-lg relative overflow-hidden">
-          <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Total Difficulty Score</p>
-          <p className="text-4xl font-black text-cyan-400 drop-shadow-sm">{difficultyStats.total.toFixed(2)}</p>
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-700/60 text-[11px] text-slate-400">
-            <span>Pool Variants: <strong className="text-white">{difficultyMods[difficultyMod].variants}</strong></span>
-            <span>MAI Index: <strong className="text-white">{difficultyStats.mai}</strong></span>
+        {/* Booster Impact — ngay sau Live MAI */}
+        <div className="bg-slate-800/60 border border-amber-500/30 rounded-xl p-3 mb-3 shadow-lg">
+          <h3 className="text-xs font-bold text-amber-300 uppercase border-b border-slate-700 pb-1 mb-2 flex items-center gap-1">
+            <Zap className="w-3 h-3" /> Booster Impact
+          </h3>
+
+          {/* Header row */}
+          <div className="grid grid-cols-4 gap-1 text-[9px] text-slate-500 font-bold uppercase mb-1.5">
+            <div>Type</div>
+            <div className="text-center">Relief</div>
+            <div className="text-center">Mult</div>
+            <div className="text-center">Score</div>
+          </div>
+
+          {/* Base */}
+          <div className="grid grid-cols-4 gap-1 items-center mb-1">
+            <div className="text-[10px] font-bold text-slate-300">Base</div>
+            <div className="text-center font-mono text-amber-400 text-[11px]">{(difficultyStats.baseRelief ?? 0).toFixed(2)}</div>
+            <div className="text-center font-mono text-amber-400 text-[11px]">{(difficultyStats.baseMultiplier ?? 1).toFixed(2)}×</div>
+            <div className="text-center font-mono text-cyan-400 text-[11px]">{(difficultyStats.baseBoosterScore ?? 0).toFixed(1)}</div>
+          </div>
+
+          {/* Median */}
+          <div className="grid grid-cols-4 gap-1 items-center mb-1">
+            <div className="text-[10px] font-bold text-slate-300">Median</div>
+            <div className="text-center font-mono text-amber-400 text-[11px]">{(difficultyStats.medianRelief ?? 0).toFixed(2)}</div>
+            <div className="text-center font-mono text-amber-400 text-[11px]">{(difficultyStats.medianMultiplier ?? 1).toFixed(2)}×</div>
+            <div className="text-center font-mono text-cyan-400 text-[11px]">{(difficultyStats.medianBoosterScore ?? 0).toFixed(1)}</div>
+          </div>
+
+          {/* Cap */}
+          <div className="grid grid-cols-4 gap-1 items-center">
+            <div className="text-[10px] font-bold text-slate-300">Cap</div>
+            <div className="text-center font-mono text-amber-400 text-[11px]">{(difficultyStats.capRelief ?? 0).toFixed(2)}</div>
+            <div className="text-center font-mono text-amber-400 text-[11px]">{(difficultyStats.capMultiplier ?? 1).toFixed(2)}×</div>
+            <div className="text-center font-mono text-cyan-400 text-[11px]">{(difficultyStats.capBoosterScore ?? 0).toFixed(1)}</div>
+          </div>
+
+          {/* Band info */}
+          <div className="mt-2 pt-2 border-t border-slate-700/50 text-[9px] text-slate-500 text-center">
+            Band: <span className="text-slate-400 font-mono">{difficultyStats.boosterBand ?? '—'}</span>
+          </div>
+        </div>
+
+        <div className="bg-slate-800 rounded-xl p-3 mb-3 border border-slate-700 shadow-lg relative overflow-hidden">
+          <div className="flex items-center justify-between">
+            <p className="text-slate-400 text-[10px] font-semibold uppercase">Total Score</p>
+            <p className="text-3xl font-black text-cyan-400">{difficultyStats.total.toFixed(2)}</p>
+          </div>
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-700/60 text-[10px] text-slate-400">
+            <span>Variants: <strong className="text-white">{difficultyMods[difficultyMod].variants}</strong></span>
+            <span>MAI: <strong className="text-white">{difficultyStats.mai}</strong></span>
           </div>
         </div>
 
@@ -2387,6 +3124,7 @@ export default function App() {
             <p className="text-[10px] text-orange-300/80">Applied when match availability falls beneath the Sweet Spot threshold.</p>
           </div>
         )}
+
       </div>
 
       {isSuggestModalOpen && (
