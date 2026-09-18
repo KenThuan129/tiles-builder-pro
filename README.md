@@ -2,6 +2,7 @@
 
 A React-based level design and balance analytics tool for a tile-matching puzzle game. Build tile layouts, place special mechanics, generate levels procedurally, playtest with boosters, and export structured JSON / `.bytes` payloads for game engine integration and difficulty spreadsheets.
 
+Link: https://kenthuan129.github.io/tiles-builder-pro/
 ---
 
 ## Table of Contents
