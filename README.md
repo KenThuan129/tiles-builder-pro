@@ -22,6 +22,7 @@ A React single-page tool that lets you:
 
 It is *not* a complete game. It's the **builder + balance engine** you'd bolt onto your own tile-match project.
 
+Link: https://kenthuan129.github.io/tiles-builder-pro/
 ---
 
 ## Table of Contents
