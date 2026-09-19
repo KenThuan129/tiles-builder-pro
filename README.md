@@ -4,10 +4,11 @@ An open-source **level design & balance analytics framework** for tile-match / m
 
 Built originally as an internal tool for a tile-matching puzzle project, released as a base framework for anyone to fork, extend, or learn from.
 
-> ⭐ **Star** if it's useful
-> ☕ **[Buy me a coffee](#support)** if it saved you time
-> 🐛 **PRs welcome** — but no SLA, no support promises (see [Contributing](#contributing))
-> 💼 **Need a custom build for your studio?** [Get in touch](#hire-me)
+[![Stars](https://img.shields.io/github/stars/kenthuan129/tiles-builder-pro?style=flat-square&color=yellow)](https://github.com/kenthuan129/tiles-builder-pro/stargazers)
+[![Issues](https://img.shields.io/github/issues/kenthuan129/tiles-builder-pro?style=flat-square)](https://github.com/kenthuan129/tiles-builder-pro/issues)
+[![License](https://img.shields.io/github/license/kenthuan129/tiles-builder-pro?style=flat-square)](LICENSE)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-orange?style=flat-square&logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/kenstargazm)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](#contributing)
 ---
 
 ## What it is
@@ -37,6 +38,11 @@ Link: https://kenthuan129.github.io/tiles-builder-pro/
 - [Difficulty Analytics Reference](#difficulty-analytics-reference)
 - [Export Formats](#export-formats)
 - [Tips & Best Practices](#tips--best-practices)
+- [Contributing](#contributing)
+- [Known Limitations](#known-limitations)
+- [Support](#support)
+- [Hire Me](#hire-me)
+- [License](#license)
 
 ---
 
@@ -507,4 +513,55 @@ They always sum to 100. Changing the Distribution Pattern resets them to the pat
 
 ---
 
-*Generated for the Tiles Match Tool. For engine integration details on the `.bytes` format, coordinate with the engine team on the `(icon, color) → id` remapping table (range 1001–1020).*
+## Contributing
+
+PRs are welcome. Support is not promised.
+
+- 🐛 **Bug reports** → open an issue with a minimal repro
+- 🔧 **Fixes** → send a PR, keep it focused
+- ✨ **Features** → open an issue first to discuss scope
+- ❌ **"When will you fix X?"** → no ETA; this is a side project
+
+No SLA. No roadmap. No guarantees. If you need stability, fork it.
+
+---
+
+## Known Limitations
+
+This is a base framework, not a production tool. Expect:
+
+- Loopholes in the generator (some edge cases produce suboptimal layouts)
+- Analytics model is a heuristic — tune the weights to your game
+- No cloud sync, no auth, no multi-user
+- `.bytes` format is an example — adapt to your engine
+
+---
+
+## Support
+
+If this saved you time, you can buy me a coffee:
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/<your-handle>)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?style=flat-square&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/kenstargazm)
+
+No obligation. Star the repo if that's all you can do — it helps just as much.
+
+---
+
+## Hire Me
+
+Need this adapted to your game, extended with new mechanics, or integrated with your engine?
+
+[![Email](https://img.shields.io/badge/Email-contact-D14836?style=flat-square&logo=gmail&logoColor=white)](mailto:ken.stargazer.12092003@gmail.com)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-connect-0A66C2?style=flat-square&logo=linkedin&logoColor=white)](www.linkedin.com/in/thuan-khang-704a8a403)
+
+Typical engagements: custom mechanic modules, difficulty tuning passes, engine integration, analytics dashboards. Fixed-scope quotes.
+
+---
+
+## License
+
+[![MIT License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+
+MIT — see [LICENSE](./LICENSE).
+You can use this commercially, fork it, ship it, sell it. Attribution appreciated but not required.
