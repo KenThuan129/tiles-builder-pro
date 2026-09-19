@@ -1,6 +1,26 @@
 # 🧩 Tiles Match Tool
 
-A React-based level design and balance analytics tool for a tile-matching puzzle game. Build tile layouts, place special mechanics, generate levels procedurally, playtest with boosters, and export structured JSON / `.bytes` payloads for game engine integration and difficulty spreadsheets.
+An open-source **level design & balance analytics framework** for tile-match / match-3 style games.
+
+Built originally as an internal tool for a tile-matching puzzle project, released as a base framework for anyone to fork, extend, or learn from.
+
+> ⭐ **Star** if it's useful
+> ☕ **[Buy me a coffee](#support)** if it saved you time
+> 🐛 **PRs welcome** — but no SLA, no support promises (see [Contributing](#contributing))
+> 💼 **Need a custom build for your studio?** [Get in touch](#hire-me)
+---
+
+## What it is
+
+A React single-page tool that lets you:
+
+- **Build tile levels** on a stacked grid with special mechanics (chained, ice, combined, hidden, event items, gift objectives)
+- **Generate levels procedurally** via a configurable "Suggest Level" wizard
+- **Playtest** with a tray + booster system (undo, magnet, swap, slot expand)
+- **Track live difficulty** via a Match Availability Index (MAI) and booster-adjusted scoring model
+- **Export to JSON** for design iteration and analytics spreadsheets, and **`.bytes`** for game engine integration
+
+It is *not* a complete game. It's the **builder + balance engine** you'd bolt onto your own tile-match project.
 
 ---
 
