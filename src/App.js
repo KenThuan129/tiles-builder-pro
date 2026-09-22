@@ -15,6 +15,25 @@ const VIEWPORT_PRESETS = {
 };
 
 const INTRINSIC_BOARD_SIZE = 480;
+const STACK_OFFSET_PX = 4;
+
+// ============================================================
+// ICON FREQUENCY BUDGET
+// ============================================================
+// Giới hạn số icon distinct cho mỗi level theo level number.
+// Mục tiêu: giảm cognitive load ở early levels.
+//
+// Trả về { maxIcons, minRepeat } — số icon tối đa và số lần
+// lặp tối thiểu của icon "anchor" (icon xuất hiện nhiều nhất).
+const getIconBudget = (levelNum) => {
+  if (levelNum <= 3)  return { maxIcons: 2, minRepeat: 2 };
+  if (levelNum <= 7)  return { maxIcons: 3, minRepeat: 2 };
+  if (levelNum <= 12) return { maxIcons: 4, minRepeat: 2 };
+  if (levelNum <= 20) return { maxIcons: 5, minRepeat: 2 };
+  if (levelNum <= 40) return { maxIcons: 7, minRepeat: 1 };
+  if (levelNum <= 80) return { maxIcons: 10, minRepeat: 1 };
+  return { maxIcons: 15, minRepeat: 1 };
+};
 
 // --- CONFIGURATION & WEIGHTS ---
 const WEIGHTS = {
@@ -45,6 +64,14 @@ const COLORS = [
   { id: 'yellow', class: 'text-yellow-500', bg: 'bg-yellow-100', border: 'border-yellow-300' },
   { id: 'purple', class: 'text-purple-500', bg: 'bg-purple-100', border: 'bg-purple-300' }
 ];
+
+const ALL_THEMES = ['theme00', 'theme01', 'theme02'];
+
+const THEME_DOT_COLORS = {
+  theme00: 'bg-emerald-400',
+  theme01: 'bg-blue-400',
+  theme02: 'bg-purple-400',
+};
 
 const MECHANICS = [
   { id: 'normal', label: 'Normal', icon: Box },
@@ -104,7 +131,7 @@ const GIFT_SIZES = {
 const GIFT_LAYERS = [0.5, 1.5, 2.5, 3.5, 4.5];
 const BYTES_VERSION = "1.0";
 const BYTES_ID_RANGE_START = 1001;
-const BYTES_ID_RANGE_END = 1020;
+const BYTES_ID_RANGE_END = 9999;
 const BOOSTER_TYPES = {
   undo: {
     label: 'Undo',
@@ -269,6 +296,227 @@ const isTileFree = (tile, allTiles) => {
   return true;
 };
 
+const buildStackDepthMap = (boardTiles) => {
+  const map = new Map();
+  if (!boardTiles || boardTiles.length === 0) return map;
+
+  // Group tiles by exact (x, y) position
+  const positionGroups = new Map(); // key: "x,y" → array of tiles
+
+  for (const t of boardTiles) {
+    if (t.isGift) continue;
+    const key = `${t.x},${t.y}`;
+    let group = positionGroups.get(key);
+    if (!group) {
+      group = [];
+      positionGroups.set(key, group);
+    }
+    group.push(t);
+  }
+
+  // Sort mỗi group theo z tăng dần → index chính là depth
+  positionGroups.forEach(group => {
+    if (group.length === 1) {
+      map.set(group[0].id, 0);
+      return;
+    }
+    group.sort((a, b) => a.z - b.z);
+    for (let i = 0; i < group.length; i++) {
+      map.set(group[i].id, i);
+    }
+  });
+
+  return map;
+};
+
+const assignIconsFromRegistry = (tiles, registry) => {
+  const assignment = new Map();
+  if (!registry) return assignment;
+
+  // Group tiles by tripletGroupId
+  const groups = new Map();
+  tiles.forEach(t => {
+    if (t.isGift) return;
+    const gid = t.tripletGroupId || `solo-${t.id}`;
+    if (!groups.has(gid)) groups.set(gid, []);
+    groups.get(gid).push(t);
+  });
+
+  // Với mỗi group, chọn icon từ pool của theme
+  groups.forEach((groupTiles) => {
+    const themeId = groupTiles[0].themeID || 'theme00';
+    const pool = registry[themeId];
+    if (!pool || pool.length === 0) {
+      // Fallback: theme không có trong registry → skip (giữ nguyên baseIcon cũ)
+      return;
+    }
+    const chosenIconId = pool[Math.floor(Math.random() * pool.length)];
+    groupTiles.forEach(t => {
+      assignment.set(t.id, chosenIconId);
+    });
+  });
+
+  return assignment;
+};
+
+// ============================================================
+// BUDGET-AWARE ICON ASSIGNMENT
+// ============================================================
+// Thay vì chọn icon random cho mỗi triplet, ta:
+// 1. Nhóm triplet theo theme (vì icon phải thuộc theme của nó)
+// 2. Với mỗi theme, giới hạn số icon distinct dùng từ pool
+// 3. Phân bổ triplet cho các icon đó theo tỷ lệ ngẫu nhiên
+//
+// Tham số:
+// - tiles: mảng tiles
+// - registry: { themeId: [iconId, ...] }
+// - maxIconsTotal: tổng số icon distinct cho cả level
+// - minRepeat: số triplet tối thiểu mà icon "hot" phải xuất hiện
+//
+// Trả về Map<tileId, iconId>
+const assignIconsBudgetAware = (tiles, registry, maxIconsTotal, minRepeat = 1) => {
+  const assignment = new Map();
+  if (!registry) return assignment;
+
+  // ─── Step 1: Group triplet theo theme ───
+  const groupsByTheme = new Map(); // themeId → [{ gid, tiles }, ...]
+  const tileToGroup = new Map();
+
+  tiles.forEach(t => {
+    if (t.isGift) return;
+    const gid = t.tripletGroupId || `solo-${t.id}`;
+    tileToGroup.set(t.id, gid);
+  });
+
+  const groups = new Map(); // gid → { gid, themeId, tiles }
+  tiles.forEach(t => {
+    if (t.isGift) return;
+    const gid = tileToGroup.get(t.id);
+    if (!groups.has(gid)) {
+      groups.set(gid, {
+        gid,
+        themeId: t.themeID || 'theme00',
+        tiles: [],
+      });
+    }
+    groups.get(gid).tiles.push(t);
+  });
+
+  // Bucket theo theme
+  groups.forEach(g => {
+    if (!groupsByTheme.has(g.themeId)) groupsByTheme.set(g.themeId, []);
+    groupsByTheme.get(g.themeId).push(g);
+  });
+
+  // ─── Step 2: Phân bổ budget cho các theme theo tỷ lệ triplet ───
+  const totalGroups = groups.size;
+  if (totalGroups === 0) return assignment;
+
+  const themeIds = [...groupsByTheme.keys()];
+  const budgetPerTheme = new Map(); // themeId → số icon distinct được phép
+
+  // Weight = số triplet của theme / tổng triplet
+  let allocated = 0;
+  themeIds.forEach((tid, idx) => {
+    const themeGroupCount = groupsByTheme.get(tid).length;
+    const share = themeGroupCount / totalGroups;
+    let budget = Math.max(1, Math.floor(maxIconsTotal * share));
+
+    // Theme cuối cùng nhận phần còn lại
+    if (idx === themeIds.length - 1) {
+      budget = Math.max(1, maxIconsTotal - allocated);
+    }
+    budget = Math.min(budget, themeGroupCount); // không vượt số triplet
+    budget = Math.min(budget, registry[tid]?.length || 0);
+
+    budgetPerTheme.set(tid, budget);
+    allocated += budget;
+  });
+
+  // ─── Step 3: Với mỗi theme, chọn icons + phân bổ triplet ───
+  themeIds.forEach(tid => {
+    const themeGroups = groupsByTheme.get(tid);
+    const pool = registry[tid] || [];
+    if (pool.length === 0) return;
+
+    const iconBudget = Math.min(budgetPerTheme.get(tid) || 1, pool.length, themeGroups.length);
+
+    // Shuffle pool và lấy `iconBudget` icon
+    const shuffledPool = [...pool].sort(() => Math.random() - 0.5);
+    const chosenIcons = shuffledPool.slice(0, iconBudget);
+
+    // ─── Phân bổ triplet cho từng icon ───
+    // Nếu minRepeat > 1, icon đầu tiên (anchor) sẽ chiếm nhiều triplet
+    // Các icon còn lại chia đều phần còn lại
+    const numGroups = themeGroups.length;
+    const iconAssignments = new Array(numGroups).fill(null);
+
+    // Shuffle groups để tránh bias vị trí
+    const shuffledGroupIdx = [...Array(numGroups).keys()].sort(() => Math.random() - 0.5);
+
+    if (iconBudget === 1) {
+      // Chỉ 1 icon → tất cả dùng chung
+      iconAssignments.fill(chosenIcons[0]);
+    } else if (numGroups <= iconBudget) {
+      // Nhiều icon hơn triplet → mỗi triplet 1 icon distinct
+      shuffledGroupIdx.forEach((gi, i) => {
+        iconAssignments[gi] = chosenIcons[i % chosenIcons.length];
+      });
+    } else {
+      // Phân bổ weighted: anchor icon chiếm ~40-50% triplet
+      // Các icon còn lại chia đều
+      const anchorShare = minRepeat > 1
+        ? Math.max(0.4, minRepeat / numGroups)
+        : 0.4;
+      const anchorCount = Math.max(1, Math.round(numGroups * anchorShare));
+
+      // Anchor icon
+      shuffledGroupIdx.slice(0, anchorCount).forEach(gi => {
+        iconAssignments[gi] = chosenIcons[0];
+      });
+
+      // Remaining icons — round robin
+      const remainingIdx = shuffledGroupIdx.slice(anchorCount);
+      remainingIdx.forEach((gi, i) => {
+        iconAssignments[gi] = chosenIcons[1 + (i % (chosenIcons.length - 1))];
+      });
+    }
+
+    // Apply assignment cho từng tile
+    themeGroups.forEach((g, gi) => {
+      const iconId = iconAssignments[gi];
+      g.tiles.forEach(t => assignment.set(t.id, iconId));
+    });
+  });
+
+  return assignment;
+};
+
+const checkComboBalance = (tiles) => {
+  const combos = new Map(); // key: `${themeId}_${iconId}` → { themeId, iconId, count }
+
+  tiles.forEach(t => {
+    if (t.isGift) return;
+    const themeId = t.themeID || 'theme00';
+    const iconId = t.assignedIconId;
+    if (iconId === undefined || iconId === null) return;
+    const key = `${themeId}_${iconId}`;
+    if (!combos.has(key)) {
+      combos.set(key, { themeId, iconId, count: 0 });
+    }
+    combos.get(key).count++;
+  });
+
+  const comboList = [...combos.values()].map(c => ({
+    ...c,
+    remainder: c.count % 3,
+  }));
+
+  const balanced = comboList.every(c => c.remainder === 0);
+
+  return { balanced, combos: comboList };
+};
+
 // A gift is "blocked" if any tile ABOVE its layer overlaps its bounding box.
 // Gifts on the same layer never block each other.
 const isGiftBlocked = (gift, allTiles) => {
@@ -354,6 +602,81 @@ const resolveSpecialMechanics = (rawTiles) => {
   });
 
   return workingTiles;
+};
+
+const formTripletGroups = (tiles) => {
+  const shuffled = [...tiles].sort(() => Math.random() - 0.5);
+  const completeTriplets = Math.floor(shuffled.length / 3);
+
+  shuffled.forEach((tile, idx) => {
+    const tripletIdx = Math.floor(idx / 3);
+    if (tripletIdx < completeTriplets) {
+      tile.tripletGroupId = `tg-${tripletIdx}`;
+    } else {
+      tile.tripletGroupId = `tg-orphan-${tile.id}`;
+    }
+  });
+
+  return completeTriplets;
+};
+
+const buildThemeQueue = (themeWeights, count) => {
+  const active = Object.entries(themeWeights)
+    .filter(([, w]) => w > 0)
+    .map(([theme, weight]) => ({ theme, weight }));
+
+  if (active.length === 0) {
+    throw new Error('buildThemeQueue: at least one theme must have weight > 0');
+  }
+
+  if (active.length === 1) {
+    return Array(count).fill(active[0].theme);
+  }
+
+  const totalWeight = active.reduce((s, t) => s + t.weight, 0);
+
+  // Step 1: Ideal (fractional) allocation per theme
+  const allocations = active.map(t => ({
+    theme: t.theme,
+    ideal: (t.weight / totalWeight) * count,
+    count: Math.floor((t.weight / totalWeight) * count),
+  }));
+
+  // Step 2: Distribute remaining slots to largest fractional remainder
+  const assigned = allocations.reduce((s, a) => s + a.count, 0);
+  const remaining = count - assigned;
+
+  allocations.sort((a, b) => (b.ideal - b.count) - (a.ideal - a.count));
+  for (let i = 0; i < remaining; i++) {
+    allocations[i % allocations.length].count += 1;
+  }
+
+  // Step 3: Expand into a queue and shuffle
+  const queue = [];
+  allocations.forEach(a => {
+    for (let i = 0; i < a.count; i++) queue.push(a.theme);
+  });
+
+  return queue.sort(() => Math.random() - 0.5);
+};
+
+const normalizeTripletGroups = (tiles) => {
+  const withGroup = tiles.filter(t => t.tripletGroupId);
+  const withoutGroup = tiles.filter(t => !t.tripletGroupId);
+
+  if (withoutGroup.length === 0) return tiles;
+
+  // Shuffle the group-less tiles for random pairing
+  const shuffled = [...withoutGroup].sort(() => Math.random() - 0.5);
+
+  let nextIdx = 0;
+  const basePrefix = `tg-norm-${Date.now()}`;
+  shuffled.forEach((tile, i) => {
+    const tripletIdx = Math.floor(i / 3);
+    tile.tripletGroupId = `${basePrefix}-${tripletIdx}`;
+  });
+
+  return [...withGroup, ...shuffled];
 };
 
 // ============================================================
@@ -608,21 +931,28 @@ const buildZToIzMap = (entities) => {
 const buildIconColorIdMap = (tileEntities) => {
   const mapping = {};
   let nextId = BYTES_ID_RANGE_START;
-  
-  for (const tile of tileEntities) {
-    const key = `${tile.icon}_${tile.color}`;
-    if (!(key in mapping)) {
-      if (nextId > BYTES_ID_RANGE_END) {
-        throw new Error(
-          `Quá nhiều cặp (icon, color): vượt quá ${BYTES_ID_RANGE_END - BYTES_ID_RANGE_START + 1} combinations. ` +
-          `Max ID = ${BYTES_ID_RANGE_END}.`
-        );
-      }
-      mapping[key] = nextId;
-      nextId++;
+
+  // Sort keys so ID assignment is deterministic (same input → same IDs)
+  const uniqueKeys = [
+    ...new Set(
+      tileEntities.map(t => {
+        const themeId = t.themeID || 'theme00';
+        const colorPart = t.color ?? 'null';
+        return `${t.icon}_${colorPart}_${themeId}`;
+      })
+    )
+  ].sort();
+
+  for (const key of uniqueKeys) {
+    if (nextId > BYTES_ID_RANGE_END) {
+      throw new Error(
+        `Too many (icon, color, theme) combinations: ` +
+        `${uniqueKeys.length} exceeds range [${BYTES_ID_RANGE_START}, ${BYTES_ID_RANGE_END}].`
+      );
     }
+    mapping[key] = nextId++;
   }
-  
+
   return mapping;
 };
 
@@ -630,7 +960,9 @@ const buildIconColorIdMap = (tileEntities) => {
  * Convert 1 tile entity từ export format → bytes format.
  */
 const convertTileToBytes = (tile, iconColorMap, zToIzMap) => {
-  const key = `${tile.icon}_${tile.color}`;
+  const themeId = tile.themeID || 'theme00';
+  const colorPart = tile.color ?? 'null';
+  const key = `${tile.icon}_${colorPart}_${themeId}`;
   
   const out = {
     id: iconColorMap[key],
@@ -718,6 +1050,17 @@ export default function App() {
 
   const [activeLayer, setActiveLayer] = useState(0);
   const [activeGiftLayer, setActiveGiftLayer] = useState(0.5)
+  const [themeWeights, setThemeWeights] = useState({
+    theme00: 100,
+    theme01: 0,
+    theme02: 0,
+  });
+
+  // Derived: themes with weight > 0, in stable order
+  const activeThemes = useMemo(
+    () => ALL_THEMES.filter(t => themeWeights[t] > 0),
+    [themeWeights]
+  );
   const [layerViewMode, setLayerViewMode] = useState('all'); // 'all' | 'cumulative' | 'isolated'
   const [selectedTool, setSelectedTool] = useState('place');
   const [difficultyMods, setDifficultyMods] = useState(INITIAL_DIFFICULTY_MODS);
@@ -735,8 +1078,21 @@ export default function App() {
   const [importJsonText, setImportJsonText] = useState('');
   const [importError, setImportError] = useState(null);
   const [importPreview, setImportPreview] = useState(null);
+  const [importConfirm, setImportConfirm] = useState(null);
+
 
   const [iconColorRatio, setIconColorRatio] = useState({ themeIconRatio: 85, colorIconRatio: 15 });
+
+  // Icon budget — null = auto từ levelNum, hoặc override thủ công
+  const [iconBudgetOverride, setIconBudgetOverride] = useState(null);
+
+  const currentIconBudget = useMemo(() => {
+    if (iconBudgetOverride !== null) {
+      return { maxIcons: iconBudgetOverride, minRepeat: 1 };
+    }
+    return getIconBudget(levelNum);
+  }, [levelNum, iconBudgetOverride]);
+
   const [boosterPreset, setBoosterPreset] = useState('none');
   const [boosterCustom, setBoosterCustom] = useState({
     undo: 0,
@@ -744,6 +1100,21 @@ export default function App() {
     swap: 0,
     slotExpand: 0
   });
+  // ─── THEME ICON REGISTRY ────────────────────────────────
+  // Map: themeID → array of icon IDs (numbers)
+  // Ví dụ: { theme00: [1001, 1002, ...], theme01: [1001, 1002, ...] }
+  const [themeIconRegistry, setThemeIconRegistry] = useState(null);
+  const [isThemeImportModalOpen, setIsThemeImportModalOpen] = useState(false);
+  const [themeImportText, setThemeImportText] = useState('');
+  const [themeImportError, setThemeImportError] = useState(null);
+  const [themeImportPreview, setThemeImportPreview] = useState(null);
+
+  // Derived: danh sách themes có sẵn trong registry
+  const availableRegistryThemes = useMemo(() => {
+    if (!themeIconRegistry) return [];
+    return Object.keys(themeIconRegistry);
+  }, [themeIconRegistry]);
+
   // Current base availability (for UI display)
   const baseAvailability = boosterPreset === 'custom'
     ? boosterCustom
@@ -786,6 +1157,11 @@ export default function App() {
   const boardScale = useMemo(() => {
     return VIEWPORT_PRESETS[viewportPreset].width / INTRINSIC_BOARD_SIZE;
   }, [viewportPreset]);
+
+  const stackDepthMap = useMemo(
+    () => buildStackDepthMap(mode === 'play' ? playTiles : tiles),
+    [tiles, playTiles, mode]
+  );
 
   // Sync default icon ratios when distribution pattern changes
   useEffect(() => {
@@ -1027,6 +1403,25 @@ export default function App() {
       }
     }
 
+    const completeTriplets = formTripletGroups(generatedTiles);
+    const themeQueue = buildThemeQueue(themeWeights, completeTriplets);
+
+    // Map each tripletGroupId → themeID
+    const groupThemeMap = new Map();
+    generatedTiles.forEach(t => {
+      if (!t.tripletGroupId) return;
+      if (!groupThemeMap.has(t.tripletGroupId)) {
+        const idx = groupThemeMap.size;
+        groupThemeMap.set(t.tripletGroupId, themeQueue[idx] || activeThemes[0]);
+      }
+      // Denormalize onto the tile for fast editor render
+      t.themeID = groupThemeMap.get(t.tripletGroupId);
+    });
+
+    // 🔍 DIAGNOSTIC
+    const counts = {};
+    generatedTiles.forEach(t => { counts[t.themeID] = (counts[t.themeID] || 0) + 1; });
+
     setTiles(generatedTiles);
     setIsSuggestModalOpen(false);
   };
@@ -1099,6 +1494,7 @@ export default function App() {
     setMode('edit');
   };
 
+  
   const handleUndo = () => {
     if (mode !== 'play' || gameState !== 'playing') return;
     if (boosterInventory.undo <= 0) return;
@@ -1205,6 +1601,106 @@ export default function App() {
     
     setSlotExpandUsed(prev => prev + 1);
     setBoosterInventory(prev => ({ ...prev, slotExpand: prev.slotExpand - 1 }));
+  };
+
+  const rethemeGroup = (groupId, newTheme) => {
+    if (!ALL_THEMES.includes(newTheme)) return;
+    setTiles(prev => prev.map(t =>
+      t.tripletGroupId === groupId ? { ...t, themeID: newTheme } : t
+    ));
+  };
+
+  const redistributeThemes = () => {
+    const matchableTiles = tiles.filter(t => !t.isGift);
+    const giftTiles = tiles.filter(t => t.isGift);
+
+    if (matchableTiles.length === 0) return;
+    if (matchableTiles.length % 3 !== 0) {
+      alert(`Số tile matchable (${matchableTiles.length}) không chia hết cho 3. Không thể redistribute.`);
+      return;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP 1: Rebuild triplet groups HOÀN TOÀN
+    // ═══════════════════════════════════════════════════════════
+    // Xóa hết tripletGroupId cũ, gán mới dựa trên shuffle toàn bộ.
+    const shuffledTiles = [...matchableTiles].sort(() => Math.random() - 0.5);
+    const numTriplets = Math.floor(shuffledTiles.length / 3);
+    const rebuiltTriplets = shuffledTiles.map((t, idx) => {
+      const tripletIdx = Math.floor(idx / 3);
+      return {
+        ...t,
+        tripletGroupId: tripletIdx < numTriplets
+          ? `tg-rb-${Date.now()}-${tripletIdx}`
+          : `tg-rb-orphan-${t.id}`,
+      };
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP 2: Gán theme cho từng triplet
+    // ═══════════════════════════════════════════════════════════
+    const groupIds = [...new Set(rebuiltTriplets.map(t => t.tripletGroupId))];
+    let themeQueue;
+    if (themeIconRegistry) {
+      const registryThemes = Object.keys(themeIconRegistry);
+      if (registryThemes.length === 0) {
+        alert('Registry rỗng — không thể redistribute.');
+        return;
+      }
+      const pool = groupIds.map(() =>
+        registryThemes[Math.floor(Math.random() * registryThemes.length)]
+      );
+      themeQueue = pool.sort(() => Math.random() - 0.5);
+    } else {
+      themeQueue = buildThemeQueue(themeWeights, groupIds.length);
+    }
+
+    const themeByGroup = new Map();
+    groupIds.forEach((gid, i) => {
+      themeByGroup.set(gid, themeQueue[i] || activeThemes[0]);
+    });
+
+    let themedTiles = rebuiltTriplets.map(t => ({
+      ...t,
+      themeID: themeByGroup.get(t.tripletGroupId),
+    }));
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP 3: Gán icon budget-aware (từ registry)
+    // ═══════════════════════════════════════════════════════════
+    if (themeIconRegistry) {
+      const budget = currentIconBudget;
+      const iconAssignment = assignIconsBudgetAware(
+        themedTiles,
+        themeIconRegistry,
+        budget.maxIcons,
+        budget.minRepeat
+      );
+      themedTiles = themedTiles.map(t => ({
+        ...t,
+        assignedIconId: iconAssignment.get(t.id) ?? null,
+      }));
+    } else {
+      // Legacy mode — không có registry thì xóa assignedIconId cũ
+      themedTiles = themedTiles.map(t => ({
+        ...t,
+        assignedIconId: undefined,
+      }));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // STEP 4: Safety check
+    // ═══════════════════════════════════════════════════════════
+    if (themeIconRegistry) {
+      const balance = checkComboBalance(themedTiles);
+      if (!balance.balanced) {
+        console.warn('[Redistribute] Combo imbalance detected:', balance.combos);
+        // Không alert — user có thể vẫn muốn giữ kết quả này
+        // Nhưng log để debug
+      }
+    }
+
+    setTiles([...themedTiles, ...giftTiles]);
   };
 
   const handleTileClick = (tile) => {
@@ -1418,8 +1914,11 @@ export default function App() {
       const occupied = tiles.some(t => t.z === activeLayer && isOverlapping(t, { x, y }));
       if (!occupied) {
         setTiles([...tiles, {
-          id: generateId(), x, y, z: activeLayer,
+          id: generateId(),
+          x, y, z: activeLayer,
           mechanic: selectedMechanic,
+          themeID: activeThemes[0],
+          tripletGroupId: `tg-manual-${generateId()}`,
           movesRemaining: selectedMechanic === 'eventItem' ? 4 : undefined
         }]);
       }
@@ -1466,35 +1965,84 @@ export default function App() {
     // ─────────────────────────────────────────────────────────────
     // STEP 3: Assign triplets to tiles (event items still consume a triplet)
     // ─────────────────────────────────────────────────────────────
-    const matchableTiles = resolvedTiles.filter(t => t.mechanic !== 'eventItem');
-    const totalMatchable = matchableTiles.length;
-    const tripletCount = Math.floor(totalMatchable / 3);
+    const groupBuckets = {};
+    resolvedTiles.forEach(tile => {
+      const gid = tile.tripletGroupId || `tg-manual-${tile.id}`;
+      (groupBuckets[gid] ||= []).push(tile);
+    });
 
-    const poolTriplets = [];
-    for (let i = 0; i < tripletCount; i++) {
-      const chosenVariant = variantPool[Math.floor(Math.random() * variantPool.length)];
-      poolTriplets.push(chosenVariant, chosenVariant, chosenVariant);
+    // Split into complete (3 tiles) and partial groups
+    const completeGroups = [];
+    const orphanTiles = [];
+    Object.values(groupBuckets).forEach(group => {
+      if (group.length === 3) completeGroups.push(group);
+      else orphanTiles.push(...group);
+    });
+
+    // Merge orphans into triplets greedily (covers manual placements)
+    let orphanIdx = 0;
+    while (orphanTiles.length - orphanIdx >= 3) {
+      completeGroups.push(orphanTiles.slice(orphanIdx, orphanIdx + 3));
+      orphanIdx += 3;
+    }
+    const remainingOrphans = orphanTiles.slice(orphanIdx);
+    if (remainingOrphans.length > 0) {
+      console.warn(
+        `[Export] ${remainingOrphans.length} tile(s) couldn't form a triplet ` +
+        `and were assigned singleton icons:`,
+        remainingOrphans.map(t => t.id)
+      );
     }
 
-    const shuffledTriplets = [...poolTriplets].sort(() => Math.random() - 0.5);
+    // Assign one variant per group; each tile in a group gets the same icon/color
+    if (themeIconRegistry) {
+      // ─── REGISTRY MODE: đọc assignedIconId từ state ───
+      // KHÔNG random. Chỉ dùng giá trị đã được set bởi Redistribute.
+      resolvedTiles.forEach(tile => {
+        tile._assignedIconId = tile.assignedIconId ?? null;
+        tile._assignedTheme = tile.themeID || 'theme00';
+      });
+    } else {
+      // ─── LEGACY MODE: fallback về variantPool hiện tại ───
+      completeGroups.forEach((group, i) => {
+        const chosenVariant = variantPool[Math.floor(Math.random() * variantPool.length)];
+        const groupTheme = group[0].themeID || activeThemes[0];
+        group.forEach(tile => {
+          tile._assignedIcon = chosenVariant.icon;
+          tile._assignedColor = chosenVariant.color;
+          tile._assignedTheme = groupTheme;
+        });
+      });
+
+      remainingOrphans.forEach(tile => {
+        const chosenVariant = variantPool[Math.floor(Math.random() * variantPool.length)];
+        tile._assignedIcon = chosenVariant.icon;
+        tile._assignedColor = chosenVariant.color;
+        tile._assignedTheme = tile.themeID || activeThemes[0];
+      });
+    }
 
     // ─────────────────────────────────────────────────────────────
     // STEP 4: Serialize tiles (no gifts in this loop)
     // ─────────────────────────────────────────────────────────────
     let tripletIdx = 0;
     const serializedTileItems = resolvedTiles.map(tile => {
-      const assigned = shuffledTriplets[tripletIdx++];
-      const iconInfo = assigned || { icon: 'Star', color: 'red' };
-
       const item = {
         entity_type: 'tile',
         tile_id: tile.id,
         x: tile.x,
         y: tile.y,
-        z: tile.z,               // Integer for tiles
-        icon: iconInfo.icon,
-        color: iconInfo.color
+        z: tile.z,
+        themeID: tile._assignedTheme || tile.themeID || activeThemes[0],
       };
+
+      if (themeIconRegistry) {
+        item.icon = tile._assignedIconId;    // NUMBER
+        item.color = null;                    // registry mode không tách color
+      } else {
+        item.icon = tile._assignedIcon;       // STRING
+        item.color = tile._assignedColor;
+      }
 
       if (tile.mechanic && tile.mechanic !== 'normal') {
         const mechanicData = { name: tile.mechanic };
@@ -1566,6 +2114,7 @@ export default function App() {
 
   return {
     level_id: levelNum,
+    icon_format: themeIconRegistry ? 'registry' : 'legacy',
     difficulty: {
       difficulty_mod_band: difficultyMod,
       variants_pool_size: modConfig.variants,
@@ -1594,7 +2143,8 @@ export default function App() {
     },
     dev_note: "Generated via TilesBuilderTester Engine. Gifts are separate goal entities on fractional gift layers (0.5, 1.5, ...). Tiles use integer layers. Event Items require 4 matches; award 2 points while active, 1 point after. Boosters follow base + accumulator model."
   };
-}, [tiles, levelNum, difficultyMod, difficultyMods, distributionPattern, iconColorRatio, boosterPreset, boosterCustom]);
+}, [tiles, levelNum, difficultyMod, difficultyMods, distributionPattern,
+    iconColorRatio, boosterPreset, boosterCustom, themeIconRegistry, currentIconBudget]);
 
   const buildBytesPayload = useMemo(() => {
     try {
@@ -1738,8 +2288,11 @@ export default function App() {
     const iconQuantities = {};
     const colorQuantities = {};
     activeTiles.forEach(t => {
-      const iconKey = t.baseIcon || 'Star';
+      const iconKey = themeIconRegistry
+        ? (t.assignedIconId ?? t._assignedIconId ?? 'unassigned')
+        : (t.baseIcon || 'Star');
       const colorKey = t.color || 'red';
+
       if (t.mechanic !== 'eventItem') {
         iconQuantities[iconKey] = (iconQuantities[iconKey] || 0) + 1;
         colorQuantities[colorKey] = (colorQuantities[colorKey] || 0) + 1;
@@ -1842,7 +2395,10 @@ export default function App() {
       medianInventory,
       capInventory
     };
-  }, [tiles, playTiles, mode, levelNum, difficultyMod, difficultyMods, distributionPattern, hybridSub1, hybridSub2, iconColorRatio, boosterPreset, boosterCustom]);
+  }, [tiles, playTiles, mode, levelNum, difficultyMod, difficultyMods,
+    distributionPattern, hybridSub1, hybridSub2, iconColorRatio,
+    boosterPreset, boosterCustom, themeIconRegistry, currentIconBudget]);
+  
     const validateImportJson = (jsonString) => {
       const errors = [];
       let parsed = null;
@@ -1852,6 +2408,34 @@ export default function App() {
         parsed = JSON.parse(jsonString);
       } catch (e) {
         return { valid: false, errors: [`Invalid JSON syntax: ${e.message}`], data: null };
+      }
+
+      // ═══════════════════════════════════════════════════════════
+      // 1b. Detect icon format — ưu tiên flag, fallback auto-detect
+      // ═══════════════════════════════════════════════════════════
+      // - File export mới (từ tool hiện tại): có icon_format = 'registry' | 'legacy'
+      // - File cũ (trước khi có flag): auto-detect từ tile đầu tiên
+      let isRegistryFormat = false;
+      let formatSource = 'default';
+
+      if (parsed.icon_format === 'registry') {
+        isRegistryFormat = true;
+        formatSource = 'flag';
+      } else if (parsed.icon_format === 'legacy') {
+        isRegistryFormat = false;
+        formatSource = 'flag';
+      } else if (parsed.map_info?.tiles) {
+        // Fallback: inspect first non-gift tile
+        const firstTile = parsed.map_info.tiles.find(
+          t => t.entity_type !== 'gift'
+        );
+        if (firstTile && typeof firstTile.icon === 'number') {
+          isRegistryFormat = true;
+          formatSource = 'auto-detect';
+        } else {
+          isRegistryFormat = false;
+          formatSource = 'auto-detect';
+        }
       }
 
       // 2. Check top-level structure
@@ -1944,8 +2528,37 @@ export default function App() {
         }
 
         // Icon/color are optional — will be replaced with placeholders
-        if (t.icon !== undefined && typeof t.icon !== 'string') errors.push(`${prefix}: icon must be string`);
-        if (t.color !== undefined && typeof t.color !== 'string') errors.push(`${prefix}: color must be string`);
+        // Icon/color validation — support both legacy (string) and registry (number) formats
+        // ═══════════════════════════════════════════════════════════
+        // Icon/color validation — context-aware theo format
+        // ═══════════════════════════════════════════════════════════
+        if (isRegistryFormat) {
+          // ─── Registry mode: icon = positive integer, color = null ───
+          if (t.icon !== undefined && t.icon !== null) {
+            const valid = typeof t.icon === 'number' && Number.isInteger(t.icon) && t.icon > 0;
+            if (!valid) {
+              errors.push(`${prefix}: registry format requires icon as positive integer, got ${t.icon}`);
+            }
+          }
+          if (t.color !== undefined && t.color !== null) {
+            errors.push(`${prefix}: registry format requires color=null, got ${t.color}`);
+          }
+        } else {
+          // ─── Legacy mode: icon/color = string ───
+          // Cho phép cả number để tương thích ngược (file cũ auto-detect nhầm)
+          if (t.icon !== undefined && t.icon !== null) {
+            const iconIsString = typeof t.icon === 'string';
+            const iconIsNumber = typeof t.icon === 'number' && Number.isInteger(t.icon) && t.icon > 0;
+            if (!iconIsString && !iconIsNumber) {
+              errors.push(`${prefix}: icon must be string (legacy) or positive integer (registry), got ${typeof t.icon}`);
+            }
+          }
+          if (t.color !== undefined && t.color !== null) {
+            if (typeof t.color !== 'string') {
+              errors.push(`${prefix}: color must be string or null, got ${typeof t.color}`);
+            }
+          }
+        }
 
         // Validate special_mechanic if present
         let mechanic = 'normal';
@@ -2008,19 +2621,100 @@ export default function App() {
         data: { 
           parsed, 
           tiles: validatedTiles,
-          gifts: validatedGifts   // ← Add gifts separately
+          gifts: validatedGifts,
+          isRegistryFormat,
+          formatSource,   // 'flag' | 'auto-detect' | 'default'
         }
-    };
+      };
+  };
+
+  const validateThemeRegistryJson = (jsonString) => {
+    const errors = [];
+    let parsed = null;
+
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch (e) {
+      return { valid: false, errors: [`Invalid JSON syntax: ${e.message}`], data: null };
+    }
+
+    if (!Array.isArray(parsed)) {
+      return { valid: false, errors: ['Root must be an array'], data: null };
+    }
+
+    if (parsed.length === 0) {
+      return { valid: false, errors: ['Array is empty'], data: null };
+    }
+
+    const registry = {};
+    const seenThemes = new Set();
+
+    parsed.forEach((entry, idx) => {
+      const prefix = `Entry[${idx}]`;
+
+      if (!entry || typeof entry !== 'object') {
+        errors.push(`${prefix}: not an object`);
+        return;
+      }
+
+      if (typeof entry.themeID !== 'string' || entry.themeID.trim() === '') {
+        errors.push(`${prefix}: missing or invalid themeID (must be non-empty string)`);
+        return;
+      }
+
+      if (seenThemes.has(entry.themeID)) {
+        errors.push(`${prefix}: duplicate themeID "${entry.themeID}"`);
+        return;
+      }
+      seenThemes.add(entry.themeID);
+
+      if (!Array.isArray(entry.themeIcons)) {
+        errors.push(`${prefix} (${entry.themeID}): themeIcons must be an array`);
+        return;
+      }
+
+      if (entry.themeIcons.length < 3) {
+        errors.push(`${prefix} (${entry.themeID}): need at least 3 icons, got ${entry.themeIcons.length}`);
+        return;
+      }
+
+      const validIcons = [];
+      entry.themeIcons.forEach((iconId, iIdx) => {
+        if (typeof iconId !== 'number' || !Number.isInteger(iconId) || iconId <= 0) {
+          errors.push(`${prefix} (${entry.themeID}) icon[${iIdx}]: must be a positive integer, got ${iconId}`);
+          return;
+        }
+        validIcons.push(iconId);
+      });
+
+      if (validIcons.length !== entry.themeIcons.length) {
+        return; // skip entry if some icons invalid
+      }
+
+      registry[entry.themeID] = validIcons;
+    });
+
+    if (errors.length > 0) {
+      return { valid: false, errors, data: null };
+    }
+
+    return { valid: true, errors: [], data: registry };
   };
 
   // --- JSON IMPORT: CONVERT TO INTERNAL FORMAT ---
-  const convertImportedToInternalFormat = (validatedTiles, validatedGifts = []) => {
-    // Assign placeholder icons/colors — will be overwritten on Play
+  const convertImportedToInternalFormat = (validatedTiles, validatedGifts = [], isRegistryFormat = false) => {
+    // Assign placeholder icons/colors — only used in legacy mode
     const allPossible = [];
-    Object.keys(ICONS).forEach(icon => COLORS.forEach(c => allPossible.push({ i: icon, c: c.id })));
+    Object.keys(ICONS).forEach(icon => 
+      COLORS.forEach(c => allPossible.push({ i: icon, c: c.id }))
+    );
+
+    // Dùng flag từ validator, thay vì auto-detect lại (tránh inconsistency)
+    const isRegistryMode = isRegistryFormat;
 
     const convertedTiles = validatedTiles.map((t, idx) => {
       const placeholder = allPossible[idx % allPossible.length];
+      const hasRegistryIcon = typeof t.icon === 'number' && Number.isInteger(t.icon);
 
       const base = {
         id: t.tile_id || `import-${idx}`,
@@ -2028,11 +2722,22 @@ export default function App() {
         y: t.y,
         z: t.z,
         mechanic: t.mechanic,
-        baseIcon: placeholder.i,
-        color: placeholder.c,
+        themeID: t.themeID || 'theme00',
       };
 
-      // Mechanic-specific fields
+      if (hasRegistryIcon) {
+        // ─── REGISTRY MODE: preserve icon ID và themeID ───
+        base.assignedIconId = t.icon;
+        base.baseIcon = placeholder.i;   // fallback cho render nếu không có registry
+        base.color = placeholder.c;
+      } else {
+        // ─── LEGACY MODE: dùng icon/color string ───
+        base.baseIcon = typeof t.icon === 'string' ? t.icon : placeholder.i;
+        base.color = typeof t.color === 'string' ? t.color : placeholder.c;
+        base.assignedIconId = undefined;
+      }
+
+      // Mechanic-specific fields (giữ nguyên)
       if (t.mechanic === 'chained1' || t.mechanic === 'chained2') {
         base.chainLinks = t.mechanicData.chain_links || [];
         base.chainLevel = t.mechanicData.chain_level || (t.mechanic === 'chained2' ? 2 : 1);
@@ -2055,9 +2760,8 @@ export default function App() {
       return base;
     });
 
-    // Convert gifts
+    // Convert gifts (giữ nguyên)
     const convertedGifts = validatedGifts.map(g => {
-      // Map size back to mechanic ID
       let mechanic = 'gift2x1';
       if (g.size.cols === 2 && g.size.rows === 2) mechanic = 'gift2x2';
       if (g.size.cols === 2 && g.size.rows === 3) mechanic = 'gift2x3';
@@ -2065,9 +2769,7 @@ export default function App() {
 
       return {
         id: g.gift_id || `import-gift-${generateId()}`,
-        x: g.x,
-        y: g.y,
-        z: g.z,
+        x: g.x, y: g.y, z: g.z,
         mechanic,
         giftCols: g.size.cols,
         giftRows: g.size.rows,
@@ -2075,7 +2777,20 @@ export default function App() {
       };
     });
 
-    return [...convertedTiles, ...convertedGifts];
+    // Rebuild triplet groups
+    const shuffled = [...convertedTiles].sort(() => Math.random() - 0.5);
+    const completeTriplets = Math.floor(shuffled.length / 3);
+    shuffled.forEach((tile, idx) => {
+      const tripletIdx = Math.floor(idx / 3);
+      tile.tripletGroupId = tripletIdx < completeTriplets
+        ? `tg-import-${tripletIdx}`
+        : `tg-import-orphan-${tile.id}`;
+    });
+
+    return {
+      tiles: [...convertedTiles, ...convertedGifts],
+      isRegistryMode,
+    };
   };
 
   // --- JSON IMPORT: HANDLE FILE UPLOAD ---
@@ -2097,6 +2812,44 @@ export default function App() {
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleThemeImportText = (text) => {
+    setThemeImportText(text);
+    if (!text.trim()) {
+      setThemeImportError(null);
+      setThemeImportPreview(null);
+      return;
+    }
+    const result = validateThemeRegistryJson(text);
+    if (result.valid) {
+      setThemeImportError(null);
+      setThemeImportPreview(result.data);
+    } else {
+      setThemeImportError(result.errors);
+      setThemeImportPreview(null);
+    }
+  };
+
+  const handleThemeImportFile = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => handleThemeImportText(e.target.result);
+    reader.readAsText(file);
+  };
+
+  const handleExecuteThemeImport = () => {
+    if (!themeImportPreview) return;
+    setThemeIconRegistry(themeImportPreview);
+    setIsThemeImportModalOpen(false);
+    setThemeImportText('');
+    setThemeImportError(null);
+    setThemeImportPreview(null);
+  };
+
+  const handleClearThemeRegistry = () => {
+    setThemeIconRegistry(null);
   };
 
   // --- JSON IMPORT: HANDLE TEXT PASTE ---
@@ -2121,34 +2874,79 @@ export default function App() {
   const handleExecuteImport = () => {
     if (!importPreview) return;
 
-    const internalTiles = convertImportedToInternalFormat(
+    const isRegistryFormat = importPreview.isRegistryFormat || false;
+    const formatSource = importPreview.formatSource || 'default';
+
+    const { tiles: internalTiles } = convertImportedToInternalFormat(
       importPreview.tiles,
-      importPreview.gifts || []
+      importPreview.gifts || [],
+      isRegistryFormat
     );
 
-    // Set level number if provided
-    if (importPreview.parsed.level_id) {
-      setLevelNum(importPreview.parsed.level_id);
+    // Build list of warnings
+    const warnings = [];
+
+    if (isRegistryFormat && !themeIconRegistry) {
+      warnings.push({
+        type: 'no-registry',
+        title: '⚠️ Tool chưa import Theme Registry',
+        detail: `File dùng registry icon IDs. Tile sẽ hiển thị placeholder cho đến khi bạn import registry.\nMở Theme Weights → Import Theme.`,
+      });
     }
 
-    // Set difficulty mod if provided
-    if (importPreview.parsed.difficulty?.difficulty_mod_band) {
-      const modKey = importPreview.parsed.difficulty.difficulty_mod_band;
-      if (difficultyMods[modKey]) {
-        setDifficultyMod(modKey);
+    if (isRegistryFormat && themeIconRegistry) {
+      const missingIcons = new Set();
+      internalTiles.forEach(t => {
+        if (t.isGift) return;
+        if (t.assignedIconId == null) return;
+        const themeId = t.themeID || 'theme00';
+        const pool = themeIconRegistry[themeId] || [];
+        if (!pool.includes(t.assignedIconId)) {
+          missingIcons.add(`${themeId}#${t.assignedIconId}`);
+        }
+      });
+      if (missingIcons.size > 0) {
+        warnings.push({
+          type: 'missing-icons',
+          title: `⚠️ ${missingIcons.size} icon ID không có trong registry`,
+          detail: [...missingIcons].slice(0, 5).join('\n') +
+                  (missingIcons.size > 5 ? `\n... và ${missingIcons.size - 5} nữa` : ''),
+        });
       }
     }
 
-  setTiles(internalTiles);
-  setIsImportModalOpen(false);
-  setImportJsonText('');
-  setImportError(null);
-  setImportPreview(null);
-};
+    // Function to actually perform the load
+    const performLoad = () => {
+      if (importPreview.parsed.level_id) {
+        setLevelNum(importPreview.parsed.level_id);
+      }
+      if (importPreview.parsed.difficulty?.difficulty_mod_band) {
+        const modKey = importPreview.parsed.difficulty.difficulty_mod_band;
+        if (difficultyMods[modKey]) {
+          setDifficultyMod(modKey);
+        }
+      }
+
+      setTiles(internalTiles);
+      setIsImportModalOpen(false);
+      setImportJsonText('');
+      setImportError(null);
+      setImportPreview(null);
+      setImportConfirm(null);
+    };
+
+    // Nếu có warning → hiện custom modal
+    if (warnings.length > 0) {
+      setImportConfirm({ warnings, onConfirm: performLoad });
+    } else {
+      performLoad();
+    }
+  };
 
   const renderTile = (tile, isPlayMode = false) => {
     const isFree = isPlayMode ? isTileFree(tile, playTiles) : isTileFree(tile, tiles);
     const isEdit = mode === 'edit';
+    const stackDepth = stackDepthMap.get(tile.id) ?? 0;
 
     const isHiddenByLayerView = isEdit && (
       (layerViewMode === 'cumulative' && tile.z > activeLayer) ||
@@ -2210,11 +3008,13 @@ export default function App() {
               ${!giftPlacementMode && tile.z !== activeLayer - 0.5 && tile.z !== activeLayer ? 'opacity-60' : ''}
             `}
             style={{
-              left: `${tile.x * 20 + 2}px`,
-              top: `${tile.y * 20 + 2}px`,
-              width: `${widthPx}px`,
-              height: `${heightPx}px`,
-              zIndex: baseZIndex
+              left: `${tile.x * 20}px`,
+              top: `${tile.y * 20}px`,
+              zIndex: tile.z * 10,
+              transform: `translateY(${stackDepth * -STACK_OFFSET_PX}px)`,
+              boxShadow: stackDepth > 0
+                ? `0 ${2 + stackDepth}px ${4 + stackDepth * 2}px rgba(0,0,0,${0.25 + stackDepth * 0.1})`
+                : undefined
             }}
           >
             <Gift className={`w-6 h-6 ${isCovered ? 'text-amber-700/60' : 'text-white'}`} />
@@ -2377,11 +3177,22 @@ export default function App() {
           left: `${tile.x * 20}px`,
           top: `${tile.y * 20}px`,
           zIndex: tile.z * 10,
-          transform: `translate(${tile.z * -2}px, ${tile.z * -2}px)`
+          transform: `translateY(${stackDepth * -STACK_OFFSET_PX}px)`,
+          boxShadow: stackDepth > 0
+            ? `inset 0 2px 0 rgba(255,255,255,0.3), 0 ${3 + stackDepth * 2}px ${6 + stackDepth * 3}px rgba(0,0,0,${0.3 + stackDepth * 0.1})`
+            : undefined
         }}
       >
         {content}
         {overlay}
+        {isEdit && activeThemes.length > 1 && tile.themeID && (
+          <div
+            className={`absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full border border-slate-900/80 shadow-sm ${
+              THEME_DOT_COLORS[tile.themeID] || 'bg-slate-500'
+            }`}
+            title={tile.themeID}
+          />
+        )}
         {tile.mechanic === 'eventItem' && (tile.movesRemaining ?? 0) > 0 && (
           <div className={`absolute -top-1 -right-1 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center z-20 border shadow ${
             (tile.movesRemaining ?? 0) <= 1
@@ -2587,6 +3398,171 @@ export default function App() {
             </div>
           </div>
 
+          <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-700/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1">
+                <Layers className="w-3 h-3" /> Theme Weights
+              </label>
+              <div className="flex items-center gap-2">
+                {themeIconRegistry ? (
+                  <>
+                    <span className="text-[10px] text-emerald-400 font-bold">
+                      ✓ Registry ({availableRegistryThemes.length})
+                    </span>
+                    <button
+                      onClick={handleClearThemeRegistry}
+                      className="text-[10px] text-red-400 hover:text-red-300 font-bold"
+                    >
+                      Clear
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setIsThemeImportModalOpen(true)}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border bg-purple-500/20 border-purple-500/40 hover:bg-purple-500/30 text-purple-300"
+                  >
+                    <Upload className="w-3 h-3" /> Import Theme
+                  </button>
+                )}
+                <button
+                  onClick={redistributeThemes}
+                  disabled={tiles.filter(t => !t.isGift).length === 0}
+                  title="Re-roll theme distribution on existing tiles (layout preserved)"
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${
+                    tiles.filter(t => !t.isGift).length === 0
+                      ? 'bg-slate-900 border-slate-700 text-slate-600 cursor-not-allowed'
+                      : 'bg-cyan-500/20 border-cyan-500/40 hover:bg-cyan-500/30 text-cyan-300'
+                  }`}
+                >
+                  <RefreshCw className="w-3 h-3" /> Redistribute
+                </button>
+              </div>
+            </div>
+
+            {themeIconRegistry && (
+              <p className="text-[10px] text-slate-400">
+                Redistribute sẽ dùng theme pool từ registry (không dùng Theme Weights bên dưới).
+              </p>
+            )}
+
+            {themeIconRegistry && (() => {
+              const balance = checkComboBalance(mode === 'play' ? playTiles : tiles);
+              if (balance.balanced) {
+                return (
+                  <p className="text-[10px] text-green-400 font-bold">
+                    ✓ All combos balanced (÷3)
+                  </p>
+                );
+              }
+              return (
+                <div className="bg-red-950/40 border border-red-800 rounded p-1.5 mt-1">
+                  <p className="text-[10px] text-red-400 font-bold mb-1">⚠ Unbalanced combos:</p>
+                  {balance.combos.filter(c => c.remainder !== 0).map(c => (
+                    <p key={`${c.themeId}_${c.iconId}`} className="text-[9px] text-red-300 font-mono">
+                      {c.themeId} #{c.iconId}: {c.count} tiles (dư {c.remainder})
+                    </p>
+                  ))}
+                </div>
+              );
+            })()}
+
+            {themeIconRegistry && (
+              <div className="bg-slate-950/50 rounded p-2 border border-slate-700/40 space-y-1">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400 font-bold uppercase">Icon Budget</span>
+                  <span className="text-cyan-400 font-mono">
+                    {iconBudgetOverride !== null
+                      ? `${iconBudgetOverride} (manual)`
+                      : `${currentIconBudget.maxIcons} (auto L${levelNum})`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={iconBudgetOverride ?? currentIconBudget.maxIcons}
+                    onChange={(e) => {
+                      const val = Math.max(1, Math.min(20, parseInt(e.target.value) || 1));
+                      setIconBudgetOverride(val);
+                    }}
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white font-mono text-center text-xs outline-none focus:border-cyan-500"
+                  />
+                  {iconBudgetOverride !== null && (
+                    <button
+                      onClick={() => setIconBudgetOverride(null)}
+                      className="text-[10px] text-red-400 hover:text-red-300 font-bold px-2"
+                    >
+                      Auto
+                    </button>
+                  )}
+                </div>
+                <p className="text-[9px] text-slate-500 italic">
+                  Số icon distinct tối đa. Giảm ở level thấp để warm-up.
+                </p>
+              </div>
+            )}
+
+            {ALL_THEMES.map(theme => {
+              const weight = themeWeights[theme];
+              const isActive = weight > 0;
+              const totalWeight = Object.values(themeWeights).reduce((a, b) => a + b, 0);
+              const pct = totalWeight > 0 ? Math.round((weight / totalWeight) * 100) : 0;
+
+              return (
+                <div key={theme} className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setThemeWeights(prev => {
+                        const next = { ...prev, [theme]: prev[theme] > 0 ? 0 : 100 };
+                        const anyActive = Object.values(next).some(v => v > 0);
+                        return anyActive ? next : prev;
+                      });
+                    }}
+                    className={`w-12 text-left text-[11px] font-bold transition-colors ${
+                      isActive ? 'text-amber-300' : 'text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {theme}
+                  </button>
+                  <input
+                    type="number"
+                    min="0"
+                    max="1000"
+                    step="10"
+                    value={weight}
+                    onChange={(e) => {
+                      const val = Math.max(0, parseInt(e.target.value) || 0);
+                      setThemeWeights(prev => {
+                        const next = { ...prev, [theme]: val };
+                        const anyActive = Object.values(next).some(v => v > 0);
+                        return anyActive ? next : { ...prev, [theme]: 1 };
+                      });
+                    }}
+                    className="w-16 bg-slate-800 border border-slate-700 rounded px-1.5 py-0.5 text-white font-mono text-center text-[11px] outline-none focus:border-amber-500"
+                  />
+                  <div className="flex-1 flex items-center gap-2">
+                    <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-amber-500 to-orange-400 transition-all"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-mono w-8 text-right">
+                      {pct}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {activeThemes.length === 1 && (
+              <p className="text-[10px] text-slate-500 pt-1 border-t border-slate-800">
+                Single theme — all tiles will be <span className="text-amber-300">{activeThemes[0]}</span>
+              </p>
+            )}
+          </div>
+
           <div>
             <label className="text-[11px] font-bold text-slate-400 uppercase mb-1 block">Special Mechanic</label>
             <div className="grid grid-cols-2 gap-1.5">
@@ -2675,6 +3651,10 @@ export default function App() {
           <button onClick={() => setTiles([])} className="w-full mt-1 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/40 rounded border border-red-900/50 transition-colors font-medium">
             Clear Board
           </button>
+
+          <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+            Changing theme weights? Click <span className="text-cyan-300 font-bold">Redistribute</span> to apply without regenerating the layout.
+          </p>
 
           {!isPlayable && (
             <div className="text-[11px] text-red-400 font-bold bg-red-950/30 p-2 rounded border border-red-900/50">
@@ -3038,7 +4018,9 @@ export default function App() {
                   const subScore = qty * WEIGHTS.iconCount.theme * (DISTRIBUTION_PATTERNS[distributionPattern]?.iconWeightFactor || 1.1) * (iconColorRatio.themeIconRatio / 100);
                   return (
                     <div key={iconName} className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-300 font-medium">{iconName} ({qty}x)</span>
+                      <span className="text-slate-300 font-medium">
+                        {themeIconRegistry ? `Icon #${iconName}` : iconName} ({qty}x)
+                      </span>
                       <span className="font-mono text-amber-400">+{subScore.toFixed(2)}</span>
                     </div>
                   );
@@ -3258,6 +4240,117 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {isThemeImportModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer" onClick={() => setIsThemeImportModalOpen(false)}>
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl p-6 shadow-2xl relative cursor-default max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-700">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <Upload className="w-5 h-5 text-purple-400" /> Import Theme Icon Registry
+              </h3>
+              <button onClick={() => setIsThemeImportModalOpen(false)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-3">
+              Format: <code className="text-cyan-300">{`[{ themeID, themeIcons: [id1, id2, ...] }]`}</code>.
+              Mỗi icon ID là số nguyên dương. Mỗi theme cần ≥ 3 icon.
+            </p>
+
+            <div className="mb-3">
+              <label className="flex items-center justify-center gap-2 bg-slate-900 border-2 border-dashed border-slate-600 hover:border-purple-500 rounded-xl py-4 cursor-pointer">
+                <FileJson className="w-5 h-5 text-purple-400" />
+                <span className="text-xs font-bold text-slate-300">Upload .json file</span>
+                <input type="file" accept=".json" onChange={handleThemeImportFile} className="hidden" />
+              </label>
+            </div>
+
+            <textarea
+              value={themeImportText}
+              onChange={(e) => handleThemeImportText(e.target.value)}
+              placeholder='[{"themeID":"theme00","themeIcons":[1001,1002,1003]}]'
+              className="w-full h-40 bg-slate-950 border border-slate-700 rounded-lg p-3 font-mono text-[11px] text-cyan-300 outline-none focus:border-purple-500 resize-none mb-3"
+            />
+
+            {themeImportError && (
+              <div className="mb-3 bg-red-950/40 border border-red-800 rounded-lg p-3 max-h-32 overflow-y-auto">
+                <ul className="space-y-0.5 text-[10px] text-red-300 font-mono">
+                  {themeImportError.map((err, i) => <li key={i}>• {err}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {themeImportPreview && (
+              <div className="mb-3 bg-green-950/30 border border-green-800 rounded-lg p-3">
+                <p className="text-xs font-bold text-green-400 mb-2">✓ Valid — {Object.keys(themeImportPreview).length} themes</p>
+                <div className="space-y-1 text-[10px] font-mono text-slate-300">
+                  {Object.entries(themeImportPreview).map(([themeId, icons]) => (
+                    <div key={themeId} className="flex justify-between">
+                      <span className="text-amber-300">{themeId}</span>
+                      <span className="text-slate-400">{icons.length} icons ({icons[0]}...{icons[icons.length-1]})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 mt-auto pt-3 border-t border-slate-700">
+              <button onClick={() => setIsThemeImportModalOpen(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 rounded-xl text-xs">
+                Cancel
+              </button>
+              <button
+                onClick={handleExecuteThemeImport}
+                disabled={!themeImportPreview}
+                className={`flex-1 font-bold py-2.5 rounded-xl text-xs ${
+                  themeImportPreview ? 'bg-purple-500 hover:bg-purple-400 text-slate-950' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                }`}>
+                Load Registry
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {importConfirm && (
+        <div className="fixed inset-0 z-[120] bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-800 border-2 border-orange-600/50 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <h3 className="text-lg font-bold text-orange-300 mb-3 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5" />
+              Cảnh báo Import
+            </h3>
+
+            <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
+              {importConfirm.warnings.map((w, i) => (
+                <div key={i} className="bg-orange-950/40 border border-orange-800/50 rounded-lg p-3">
+                  <p className="text-xs font-bold text-orange-200 mb-1">{w.title}</p>
+                  <p className="text-[11px] text-orange-300/90 whitespace-pre-line font-mono">{w.detail}</p>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[11px] text-slate-400 mb-4">
+              Tile vẫn sẽ được load vào board. Bạn có thể Redistribute lại sau.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setImportConfirm(null)}
+                className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 rounded-xl text-xs transition-all"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={importConfirm.onConfirm}
+                className="flex-1 bg-orange-500 hover:bg-orange-400 text-slate-950 font-bold py-2.5 rounded-xl text-xs shadow-lg transition-all"
+              >
+                Tiếp tục Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isImportModalOpen && (
         <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer" onClick={() => setIsImportModalOpen(false)}>
           <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-3xl p-6 shadow-2xl relative cursor-default animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -3320,6 +4413,24 @@ export default function App() {
                   <Check className="w-4 h-4 text-green-400" />
                   <span className="text-xs font-bold text-green-400 uppercase">Valid — Ready to Import</span>
                 </div>
+
+                {/* ⭐ Format indicator */}
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Icon Format:</span>
+                  {importPreview.isRegistryFormat ? (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-950/60 text-purple-300 border border-purple-700">
+                      Registry (numeric IDs)
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-700">
+                      Legacy (string icon/color)
+                    </span>
+                  )}
+                  <span className="text-[9px] text-slate-500 italic">
+                    (detected via {importPreview.formatSource || 'default'})
+                  </span>
+                </div>
+
                 <div className="grid grid-cols-5 gap-2 text-[10px]">
                   <div className="bg-slate-900/60 p-2 rounded">
                     <p className="text-slate-500 uppercase font-bold">Level</p>
@@ -3346,6 +4457,17 @@ export default function App() {
                     </p>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {importPreview && importPreview.isRegistryFormat && !themeIconRegistry && (
+              <div className="mb-3 bg-orange-950/40 border border-orange-800 rounded-lg p-2.5">
+                <p className="text-[10px] font-bold text-orange-300 mb-1">
+                  ⚠️ File này dùng registry IDs nhưng tool chưa import registry.
+                </p>
+                <p className="text-[9px] text-orange-400/80">
+                  Sau khi import, tile sẽ hiển thị placeholder. Mở Theme Weights → Import Theme để nạp registry đúng.
+                </p>
               </div>
             )}
 
