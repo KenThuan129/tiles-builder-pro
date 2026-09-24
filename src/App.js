@@ -9,8 +9,8 @@ import {
 
 const VIEWPORT_PRESETS = {
   default: { label: 'Default', width: 480, cellSize: 20 },
-  mobile:  { label: 'Mobile',  width: 320, cellSize: 20 },
-  tablet:  { label: 'Tablet',  width: 640, cellSize: 20 },
+  mobile: { label: 'Mobile', width: 320, cellSize: 20 },
+  tablet: { label: 'Tablet', width: 640, cellSize: 20 },
   desktop: { label: 'Desktop', width: 800, cellSize: 20 },
 };
 
@@ -26,8 +26,8 @@ const STACK_OFFSET_PX = 4;
 // Trả về { maxIcons, minRepeat } — số icon tối đa và số lần
 // lặp tối thiểu của icon "anchor" (icon xuất hiện nhiều nhất).
 const getIconBudget = (levelNum) => {
-  if (levelNum <= 3)  return { maxIcons: 2, minRepeat: 2 };
-  if (levelNum <= 7)  return { maxIcons: 3, minRepeat: 2 };
+  if (levelNum <= 3) return { maxIcons: 2, minRepeat: 2 };
+  if (levelNum <= 7) return { maxIcons: 3, minRepeat: 2 };
   if (levelNum <= 12) return { maxIcons: 4, minRepeat: 2 };
   if (levelNum <= 20) return { maxIcons: 5, minRepeat: 2 };
   if (levelNum <= 40) return { maxIcons: 7, minRepeat: 1 };
@@ -50,7 +50,7 @@ const WEIGHTS = {
     combined: 1.40,
     hidden: 0.03,
     eventItem: 2.50,
-    gift2x1: 0,   
+    gift2x1: 0,
     gift2x2: 0,
     gift2x3: 0,
   }
@@ -193,20 +193,20 @@ const BOOSTER_PRESETS = {
 
 // Cap cho accumulator inventory theo level band
 const BOOSTER_CAPS = {
-  '11-30':  { undo: 5,  magnet: 3,  swap: 3,  slotExpand: 2 },
-  '31-50':  { undo: 7,  magnet: 4,  swap: 4,  slotExpand: 3 },
-  '51-80':  { undo: 10, magnet: 6,  swap: 6,  slotExpand: 4 },
-  '81-120': { undo: 15, magnet: 8,  swap: 8,  slotExpand: 5 },
-  '121+':   { undo: 20, magnet: 10, swap: 10, slotExpand: 6 }
+  '11-30': { undo: 5, magnet: 3, swap: 3, slotExpand: 2 },
+  '31-50': { undo: 7, magnet: 4, swap: 4, slotExpand: 3 },
+  '51-80': { undo: 10, magnet: 6, swap: 6, slotExpand: 4 },
+  '81-120': { undo: 15, magnet: 8, swap: 8, slotExpand: 5 },
+  '121+': { undo: 20, magnet: 10, swap: 10, slotExpand: 6 }
 };
 
 // Median inventory (giả định trung bình player có khi vào level)
 const BOOSTER_MEDIANS = {
-  '11-30':  { undo: 1,  magnet: 0, swap: 0, slotExpand: 0 },
-  '31-50':  { undo: 3,  magnet: 1, swap: 1, slotExpand: 0 },
-  '51-80':  { undo: 5,  magnet: 2, swap: 2, slotExpand: 1 },
-  '81-120': { undo: 8,  magnet: 4, swap: 3, slotExpand: 2 },
-  '121+':   { undo: 10, magnet: 5, swap: 4, slotExpand: 3 }
+  '11-30': { undo: 1, magnet: 0, swap: 0, slotExpand: 0 },
+  '31-50': { undo: 3, magnet: 1, swap: 1, slotExpand: 0 },
+  '51-80': { undo: 5, magnet: 2, swap: 2, slotExpand: 1 },
+  '81-120': { undo: 8, magnet: 4, swap: 3, slotExpand: 2 },
+  '121+': { undo: 10, magnet: 5, swap: 4, slotExpand: 3 }
 };
 
 // Helper: determine band from level number
@@ -283,7 +283,7 @@ const isIceFrozen = (tile) => {
 const isTileFree = (tile, allTiles) => {
   if (isTileCoveredByOther(tile, allTiles)) return false;
   if (isChainLocked(tile)) return false;
-  
+
   if (tile.mechanic === 'ice2' || tile.mechanic === 'ice3') {
     const req = tile.mechanic === 'ice3' ? 3 : 2;
     if ((tile.iceMatchesRemaining ?? req) > 0) return false;
@@ -379,19 +379,10 @@ const assignIconsBudgetAware = (tiles, registry, maxIconsTotal, minRepeat = 1) =
   if (!registry) return assignment;
 
   // ─── Step 1: Group triplet theo theme ───
-  const groupsByTheme = new Map(); // themeId → [{ gid, tiles }, ...]
-  const tileToGroup = new Map();
-
-  tiles.forEach(t => {
-    if (t.isGift) return;
-    const gid = t.tripletGroupId || `solo-${t.id}`;
-    tileToGroup.set(t.id, gid);
-  });
-
   const groups = new Map(); // gid → { gid, themeId, tiles }
   tiles.forEach(t => {
     if (t.isGift) return;
-    const gid = tileToGroup.get(t.id);
+    const gid = t.tripletGroupId || `solo-${t.id}`;
     if (!groups.has(gid)) {
       groups.set(gid, {
         gid,
@@ -402,92 +393,119 @@ const assignIconsBudgetAware = (tiles, registry, maxIconsTotal, minRepeat = 1) =
     groups.get(gid).tiles.push(t);
   });
 
-  // Bucket theo theme
+  const groupsByTheme = new Map();
   groups.forEach(g => {
     if (!groupsByTheme.has(g.themeId)) groupsByTheme.set(g.themeId, []);
     groupsByTheme.get(g.themeId).push(g);
   });
 
-  // ─── Step 2: Phân bổ budget cho các theme theo tỷ lệ triplet ───
   const totalGroups = groups.size;
   if (totalGroups === 0) return assignment;
 
   const themeIds = [...groupsByTheme.keys()];
-  const budgetPerTheme = new Map(); // themeId → số icon distinct được phép
 
-  // Weight = số triplet của theme / tổng triplet
+  // ─── Step 2: Phân bổ budget icon cho mỗi theme ───
+  // Đảm bảo: budget ≥ 1, budget ≤ số triplet, budget ≤ pool size
+  const budgetPerTheme = new Map();
   let allocated = 0;
+
   themeIds.forEach((tid, idx) => {
     const themeGroupCount = groupsByTheme.get(tid).length;
+    const poolSize = (registry[tid] || []).length;
     const share = themeGroupCount / totalGroups;
-    let budget = Math.max(1, Math.floor(maxIconsTotal * share));
 
-    // Theme cuối cùng nhận phần còn lại
+    let budget;
     if (idx === themeIds.length - 1) {
+      // Theme cuối nhận phần còn lại của tổng budget
       budget = Math.max(1, maxIconsTotal - allocated);
+    } else {
+      budget = Math.max(1, Math.floor(maxIconsTotal * share));
     }
-    budget = Math.min(budget, themeGroupCount); // không vượt số triplet
-    budget = Math.min(budget, registry[tid]?.length || 0);
+
+    // Clamp: không vượt số triplet, không vượt pool
+    budget = Math.min(budget, themeGroupCount, poolSize);
 
     budgetPerTheme.set(tid, budget);
     allocated += budget;
   });
 
-  // ─── Step 3: Với mỗi theme, chọn icons + phân bổ triplet ───
+  // ─── Step 3: Với mỗi theme, phân bổ triplet cho từng icon ───
+  // ĐÂY LÀ PHẦN QUAN TRỌNG NHẤT — đảm bảo mọi combo ÷ 3
   themeIds.forEach(tid => {
     const themeGroups = groupsByTheme.get(tid);
     const pool = registry[tid] || [];
-    if (pool.length === 0) return;
+    if (pool.length === 0 || themeGroups.length === 0) return;
 
-    const iconBudget = Math.min(budgetPerTheme.get(tid) || 1, pool.length, themeGroups.length);
+    const iconBudget = Math.min(
+      budgetPerTheme.get(tid) || 1,
+      pool.length,
+      themeGroups.length
+    );
 
-    // Shuffle pool và lấy `iconBudget` icon
+    // Chọn icon từ pool (shuffle để đa dạng giữa các lần redistribute)
     const shuffledPool = [...pool].sort(() => Math.random() - 0.5);
     const chosenIcons = shuffledPool.slice(0, iconBudget);
 
-    // ─── Phân bổ triplet cho từng icon ───
-    // Nếu minRepeat > 1, icon đầu tiên (anchor) sẽ chiếm nhiều triplet
-    // Các icon còn lại chia đều phần còn lại
     const numGroups = themeGroups.length;
-    const iconAssignments = new Array(numGroups).fill(null);
 
     // Shuffle groups để tránh bias vị trí
-    const shuffledGroupIdx = [...Array(numGroups).keys()].sort(() => Math.random() - 0.5);
+    const shuffledGroupIdx = [...Array(numGroups).keys()]
+      .sort(() => Math.random() - 0.5);
+
+    // ─── Phân bổ số triplet cho từng icon ───
+    // Mục tiêu: tổng = numGroups, mỗi icon ≥ 1, icon đầu ≥ minRepeat (nếu có thể)
+    const counts = new Array(iconBudget).fill(0);
 
     if (iconBudget === 1) {
-      // Chỉ 1 icon → tất cả dùng chung
-      iconAssignments.fill(chosenIcons[0]);
-    } else if (numGroups <= iconBudget) {
-      // Nhiều icon hơn triplet → mỗi triplet 1 icon distinct
-      shuffledGroupIdx.forEach((gi, i) => {
-        iconAssignments[gi] = chosenIcons[i % chosenIcons.length];
-      });
+      counts[0] = numGroups;
     } else {
-      // Phân bổ weighted: anchor icon chiếm ~40-50% triplet
-      // Các icon còn lại chia đều
-      const anchorShare = minRepeat > 1
-        ? Math.max(0.4, minRepeat / numGroups)
-        : 0.4;
-      const anchorCount = Math.max(1, Math.round(numGroups * anchorShare));
+      // Base: mỗi icon ít nhất 1 triplet
+      for (let i = 0; i < iconBudget; i++) counts[i] = 1;
+      let remaining = numGroups - iconBudget;
 
-      // Anchor icon
-      shuffledGroupIdx.slice(0, anchorCount).forEach(gi => {
-        iconAssignments[gi] = chosenIcons[0];
-      });
+      // Ưu tiên icon đầu (anchor) nhận thêm nếu cần minRepeat
+      const anchorExtraNeeded = Math.max(0, minRepeat - 1);
+      const anchorExtra = Math.min(remaining, anchorExtraNeeded);
+      counts[0] += anchorExtra;
+      remaining -= anchorExtra;
 
-      // Remaining icons — round robin
-      const remainingIdx = shuffledGroupIdx.slice(anchorCount);
-      remainingIdx.forEach((gi, i) => {
-        iconAssignments[gi] = chosenIcons[1 + (i % (chosenIcons.length - 1))];
-      });
+      // Chia đều phần còn lại, dư thì cộng dồn vào các icon đầu
+      if (remaining > 0) {
+        const base = Math.floor(remaining / iconBudget);
+        const leftover = remaining % iconBudget;
+        for (let i = 0; i < iconBudget; i++) {
+          counts[i] += base;
+          if (i < leftover) counts[i] += 1;
+        }
+      }
     }
 
-    // Apply assignment cho từng tile
-    themeGroups.forEach((g, gi) => {
-      const iconId = iconAssignments[gi];
-      g.tiles.forEach(t => assignment.set(t.id, iconId));
+    // ─── Gán triplet vào icon theo counts (deterministic) ───
+    let cursor = 0;
+    chosenIcons.forEach((iconId, iconIdx) => {
+      const take = counts[iconIdx];
+      for (let k = 0; k < take; k++) {
+        const gi = shuffledGroupIdx[cursor++];
+        const group = themeGroups[gi];
+        group.tiles.forEach(t => assignment.set(t.id, iconId));
+      }
     });
   });
+
+  // ─── Step 4: Safety check (dev-only, tự tin không cần thiết) ───
+  // Có thể bỏ qua vì by construction đã balanced.
+  // Nhưng giữ lại để catch bug nếu có:
+  const counts = new Map();
+  tiles.forEach(t => {
+    if (t.isGift) return;
+    if (!assignment.has(t.id)) return;
+    const key = `${t.themeID || 'theme00'}_${assignment.get(t.id)}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  const unbalanced = [...counts.entries()].filter(([, c]) => c % 3 !== 0);
+  if (unbalanced.length > 0) {
+    console.error('[assignIconsBudgetAware] BUG — unbalanced combos:', unbalanced);
+  }
 
   return assignment;
 };
@@ -689,16 +707,16 @@ const normalizeTripletGroups = (tiles) => {
  * Free tile = tappable ngay (không bị cover, không bị lock).
  */
 const countInitialMatches = (boardTiles) => {
-  const freeTiles = boardTiles.filter(t => 
+  const freeTiles = boardTiles.filter(t =>
     !t.isGift && isTileFree(t, boardTiles)
   );
-  
+
   const groups = {};
   freeTiles.forEach(t => {
     const key = `${t.baseIcon}_${t.color}`;
     groups[key] = (groups[key] || 0) + 1;
   });
-  
+
   return Object.values(groups).filter(count => count >= 3).length;
 };
 
@@ -723,7 +741,7 @@ const findMagnetTargets = (boardTiles, container) => {
       return a.y - b.y;
     });
   };
-  
+
   // ═══════════════════════════════════════════════════════════
   // LEVEL 1: Tray has tiles → find matching board tile
   // ═══════════════════════════════════════════════════════════
@@ -737,23 +755,23 @@ const findMagnetTargets = (boardTiles, container) => {
       trayCounts[key] = (trayCounts[key] || 0) + 1;
       trayLatestIdx[key] = idx;
     });
-    
+
     const sortedKeys = Object.keys(trayCounts).sort((a, b) => {
       if (trayCounts[b] !== trayCounts[a]) return trayCounts[b] - trayCounts[a];
       return trayLatestIdx[b] - trayLatestIdx[a];
     });
-    
+
     // Try each tray key by priority — find first one with board candidates
     for (const targetKey of sortedKeys) {
       const [targetIcon, targetColor] = targetKey.split('_');
-      
-      const candidates = boardTiles.filter(t => 
-        !t.isGift && 
-        t.baseIcon === targetIcon && 
+
+      const candidates = boardTiles.filter(t =>
+        !t.isGift &&
+        t.baseIcon === targetIcon &&
         t.color === targetColor &&
         isTileFree(t, boardTiles)
       );
-      
+
       if (candidates.length > 0) {
         const sorted = sortByPriority(candidates);
         return {
@@ -762,7 +780,7 @@ const findMagnetTargets = (boardTiles, container) => {
         };
       }
     }
-    
+
     // ═══════════════════════════════════════════════════════════
     // LEVEL 2: Tray has 2+ tiles of same (icon,color) but no board match
     // → Try to find board tile matching any tray pair
@@ -770,13 +788,13 @@ const findMagnetTargets = (boardTiles, container) => {
     // ═══════════════════════════════════════════════════════════
     // If we're here, no tray tile has board match. Fall through to Level 3.
   }
-  
+
   // ═══════════════════════════════════════════════════════════
   // LEVEL 3: Pure board match — find 3 tiles with same (icon,color)
   // Then pull 2 of them to tray, effectively creating a match with the 3rd
   // (Or: if tray is empty, pull 3 tiles at once)
   // ═══════════════════════════════════════════════════════════
-  
+
   // Group free board tiles by (icon, color)
   const freeTiles = boardTiles.filter(t => !t.isGift && isTileFree(t, boardTiles));
   const groups = {};
@@ -785,10 +803,10 @@ const findMagnetTargets = (boardTiles, container) => {
     if (!groups[key]) groups[key] = [];
     groups[key].push(t);
   });
-  
+
   // Find first group with >= 3 tiles (prioritize by board position)
   const validKeys = Object.keys(groups).filter(k => groups[k].length >= 3);
-  
+
   if (validKeys.length > 0) {
     // Sort keys by their best tile position (for determinism)
     const sortedKeys = validKeys.sort((a, b) => {
@@ -798,21 +816,21 @@ const findMagnetTargets = (boardTiles, container) => {
       if (aBest.x !== bBest.x) return bBest.x - aBest.x;
       return aBest.y - bBest.y;
     });
-    
+
     const chosenKey = sortedKeys[0];
     const sortedGroup = sortByPriority(groups[chosenKey]);
-    
+
     // How many tiles to pull depends on how many we need to complete a match
     // If tray is empty → pull 3 tiles (creates immediate match)
     // If tray has N tiles of this key → pull (3 - N) tiles
     const [targetIcon, targetColor] = chosenKey.split('_');
-    const trayCount = container.filter(t => 
+    const trayCount = container.filter(t =>
       t.baseIcon === targetIcon && t.color === targetColor
     ).length;
-    
+
     const tilesNeeded = Math.max(0, 3 - trayCount);
     const tilesToPull = sortedGroup.slice(0, tilesNeeded);
-    
+
     if (tilesToPull.length > 0) {
       return {
         tilesToPull,
@@ -820,7 +838,7 @@ const findMagnetTargets = (boardTiles, container) => {
       };
     }
   }
-  
+
   // ═══════════════════════════════════════════════════════════
   // LEVEL 4 (last resort): No free group has 3+ tiles
   // → Pull 1 tile from board into tray (doesn't create match, but clears board)
@@ -834,7 +852,7 @@ const findMagnetTargets = (boardTiles, container) => {
       noMatch: true
     };
   }
-  
+
   // Nothing to pull — board is empty or all locked
   return null;
 };
@@ -845,35 +863,35 @@ const findMagnetTargets = (boardTiles, container) => {
  */
 const shuffleIcons = (boardTiles, targetMatches) => {
   const nonGiftTiles = boardTiles.filter(t => !t.isGift);
-  
+
   // Extract all (icon, color) pairs
   const pairs = nonGiftTiles.map(t => ({ icon: t.baseIcon, color: t.color }));
-  
+
   let bestBoard = null;
   let bestMatchCount = -1;
-  
+
   for (let attempt = 0; attempt < 100; attempt++) {
     const shuffled = [...pairs].sort(() => Math.random() - 0.5);
-    
+
     let idx = 0;
     const candidateBoard = boardTiles.map(t => {
       if (t.isGift) return t;
       const newPair = shuffled[idx++];
       return { ...t, baseIcon: newPair.icon, color: newPair.color };
     });
-    
+
     const matchCount = countInitialMatches(candidateBoard);
-    
+
     if (matchCount >= targetMatches) {
       return candidateBoard; // Good enough
     }
-    
+
     if (matchCount > bestMatchCount) {
       bestMatchCount = matchCount;
       bestBoard = candidateBoard;
     }
   }
-  
+
   return bestBoard; // Best effort after 100 attempts
 };
 
@@ -963,18 +981,18 @@ const convertTileToBytes = (tile, iconColorMap, zToIzMap) => {
   const themeId = tile.themeID || 'theme00';
   const colorPart = tile.color ?? 'null';
   const key = `${tile.icon}_${colorPart}_${themeId}`;
-  
+
   const out = {
     id: iconColorMap[key],
     ix: tile.x,
     iy: tile.y,
     iz: zToIzMap[tile.z]
   };
-  
+
   const mechanic = tile.special_mechanic;
   if (mechanic) {
     const name = mechanic.name;
-    
+
     if (name === "hidden") {
       out.isBackUp = true;
     } else if (name === "eventItem") {
@@ -984,7 +1002,7 @@ const convertTileToBytes = (tile, iconColorMap, zToIzMap) => {
     }
     // ice2, ice3, combined, chained1, chained2, blocker: bỏ qua
   }
-  
+
   return out;
 };
 
@@ -995,7 +1013,7 @@ const convertGiftToBytes = (gift, zToIzMap) => {
   const size = gift.size || {};
   const cols = size.cols || 0;
   const rows = size.rows || 0;
-  
+
   return {
     ix: gift.x,
     iy: gift.y,
@@ -1013,26 +1031,26 @@ const convertGiftToBytes = (gift, zToIzMap) => {
  */
 const convertToBytes = (levelExport) => {
   const entities = levelExport.map_info?.tiles || [];
-  
+
   // Filter entities
-  const tileEntities = entities.filter(e => 
+  const tileEntities = entities.filter(e =>
     !e.entity_type || e.entity_type === "tile"
   );
-  const giftEntities = entities.filter(e => 
+  const giftEntities = entities.filter(e =>
     e.entity_type === "gift"
   );
-  
+
   // Build maps
   const zToIzMap = buildZToIzMap(entities);
   const iconColorMap = buildIconColorIdMap(tileEntities);
-  
+
   // Convert
   const outTiles = tileEntities.map(t => convertTileToBytes(t, iconColorMap, zToIzMap));
   const outGifts = giftEntities.map(g => convertGiftToBytes(g, zToIzMap));
-  
+
   // Metadata
   const difficultyBand = levelExport.difficulty?.difficulty_mod_band;
-  
+
   // Final output — version marker ở ĐẦU file
   return {
     bytes_version: BYTES_VERSION,
@@ -1108,6 +1126,7 @@ export default function App() {
   const [themeImportText, setThemeImportText] = useState('');
   const [themeImportError, setThemeImportError] = useState(null);
   const [themeImportPreview, setThemeImportPreview] = useState(null);
+  const [showOnlyUnbalanced, setShowOnlyUnbalanced] = useState(false);
 
   // Derived: danh sách themes có sẵn trong registry
   const availableRegistryThemes = useMemo(() => {
@@ -1439,7 +1458,7 @@ export default function App() {
     const eventItemTiles = resolvedTiles.filter(t => t.mechanic === 'eventItem');
     const otherMatchable = resolvedTiles.filter(t => t.mechanic !== 'eventItem');
     const totalMatchable = otherMatchable.length + eventItemTiles.length;
-    
+
     if (totalMatchable % 3 !== 0) {
       alert(`Matchable tiles (${totalMatchable}) phải chia hết cho 3.`);
       return;
@@ -1494,15 +1513,15 @@ export default function App() {
     setMode('edit');
   };
 
-  
+
   const handleUndo = () => {
     if (mode !== 'play' || gameState !== 'playing') return;
     if (boosterInventory.undo <= 0) return;
     if (container.length === 0) return;
-    
+
     // Get latest tile from tray
     const lastTile = container[container.length - 1];
-    
+
     // Restore to board (x, y, z preserved from when it entered tray)
     setPlayTiles([...playTiles, lastTile]);
     setContainer(container.slice(0, -1));
@@ -1513,24 +1532,24 @@ export default function App() {
     if (mode !== 'play' || gameState !== 'playing') return;
     if (boosterInventory.magnet <= 0) return;
     // ← XÓA check container.length === 0 — giờ Magnet chạy được cả khi tray rỗng
-    
+
     const result = findMagnetTargets(playTiles, container);
     if (!result || result.tilesToPull.length === 0) {
       alert('Không có tile nào trên board để Magnet pull.');
       return;
     }
-    
+
     // Start from current state
     let workingBoard = [...playTiles];
     let workingContainer = [...container];
-    
+
     // Pull each tile from board → tray
     result.tilesToPull.forEach(tileToPull => {
       // Remove from board
       workingBoard = workingBoard.filter(t => t.id !== tileToPull.id);
-      
+
       // Add to tray (insert after matching tile if exists)
-      const matchIndex = workingContainer.findLastIndex(t => 
+      const matchIndex = workingContainer.findLastIndex(t =>
         t.baseIcon === tileToPull.baseIcon && t.color === tileToPull.color
       );
       if (matchIndex !== -1) {
@@ -1539,7 +1558,7 @@ export default function App() {
         workingContainer.push(tileToPull);
       }
     });
-    
+
     // Check for match(es) → remove all matches found
     let anyMatchOccurred = false;
     let loopGuard = 0;
@@ -1560,18 +1579,18 @@ export default function App() {
       }
       if (!foundMatch) break;
     }
-    
+
     setPlayTiles(workingBoard);
     setContainer(workingContainer);
     setBoosterInventory({ ...boosterInventory, magnet: boosterInventory.magnet - 1 });
-    
+
     // Check win/loss
     const remainingTiles = workingBoard.filter(t => !t.isGift);
     const remainingGifts = workingBoard.filter(t => t.isGift);
     const totalGiftsInLevel = playTiles.filter(t => t.isGift).length;
     const allGiftsRevealed = totalGiftsInLevel > 0 && remainingGifts.length === 0;
     const trayMax = 7 + slotExpandUsed;
-    
+
     if (workingContainer.length >= trayMax) {
       setGameState('lost');
     } else if (totalGiftsInLevel > 0) {
@@ -1584,13 +1603,13 @@ export default function App() {
   const handleSwap = () => {
     if (mode !== 'play' || gameState !== 'playing') return;
     if (boosterInventory.swap <= 0) return;
-    
+
     const currentMatches = countInitialMatches(playTiles);
     const targetMatches = Math.max(1, currentMatches - 2);
-    
+
     const newBoard = shuffleIcons(playTiles, targetMatches);
     if (!newBoard) return;
-    
+
     setPlayTiles(newBoard);
     setBoosterInventory({ ...boosterInventory, swap: boosterInventory.swap - 1 });
   };
@@ -1598,7 +1617,7 @@ export default function App() {
   const handleSlotExpand = () => {
     if (mode !== 'play' || gameState !== 'playing') return;
     if (boosterInventory.slotExpand <= 0) return;
-    
+
     setSlotExpandUsed(prev => prev + 1);
     setBoosterInventory(prev => ({ ...prev, slotExpand: prev.slotExpand - 1 }));
   };
@@ -1688,76 +1707,64 @@ export default function App() {
       }));
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // STEP 4: Safety check
-    // ═══════════════════════════════════════════════════════════
-    if (themeIconRegistry) {
-      const balance = checkComboBalance(themedTiles);
-      if (!balance.balanced) {
-        console.warn('[Redistribute] Combo imbalance detected:', balance.combos);
-        // Không alert — user có thể vẫn muốn giữ kết quả này
-        // Nhưng log để debug
-      }
-    }
-
     setTiles([...themedTiles, ...giftTiles]);
   };
 
   const handleTileClick = (tile) => {
-  if (mode === 'edit') return;
-  if (gameState !== 'playing') return;
-  if (!isTileFree(tile, playTiles)) return;
+    if (mode === 'edit') return;
+    if (gameState !== 'playing') return;
+    if (!isTileFree(tile, playTiles)) return;
 
-  let workingBoard = [...playTiles];
-  if (tile.mechanic === 'hidden' && !tile.isRevealed) {
-    workingBoard = workingBoard.map(t => t.id === tile.id ? { ...t, isRevealed: true } : t);
-    tile = { ...tile, isRevealed: true };
-  }
-
-  const groupTiles = tile.mechanic === 'combined' && tile.combineGroupId
-    ? workingBoard.filter(t => t.combineGroupId === tile.combineGroupId)
-    : [tile];
-
-  workingBoard = workingBoard.filter(t => !groupTiles.some(g => g.id === t.id));
-  let workingContainer = [...container];
-  let anyMatchOccurred = false;
-  let matchedEventItemCount = 0;
-  let matchedEventItemWithinWindow = 0;
-
-  groupTiles.forEach(gTile => {
-    const matchIndex = workingContainer.findLastIndex(t => t.baseIcon === gTile.baseIcon && t.color === gTile.color);
-    if (matchIndex !== -1) {
-      workingContainer.splice(matchIndex + 1, 0, gTile);
-    } else {
-      workingContainer.push(gTile);
+    let workingBoard = [...playTiles];
+    if (tile.mechanic === 'hidden' && !tile.isRevealed) {
+      workingBoard = workingBoard.map(t => t.id === tile.id ? { ...t, isRevealed: true } : t);
+      tile = { ...tile, isRevealed: true };
     }
 
-    for (let i = 0; i <= workingContainer.length - 3; i++) {
-      if (
-        workingContainer[i].baseIcon === workingContainer[i + 1].baseIcon &&
-        workingContainer[i].baseIcon === workingContainer[i + 2].baseIcon &&
-        workingContainer[i].color === workingContainer[i + 1].color &&
-        workingContainer[i].color === workingContainer[i + 2].color
-      ) {
-        const matchedTriplet = workingContainer.splice(i, 3);
-        anyMatchOccurred = true;
+    const groupTiles = tile.mechanic === 'combined' && tile.combineGroupId
+      ? workingBoard.filter(t => t.combineGroupId === tile.combineGroupId)
+      : [tile];
 
-        // Count event items in matched triplet
-        matchedTriplet.forEach(mt => {
-          if (mt.mechanic === 'eventItem') {
-            matchedEventItemCount++;
-            if ((mt.crackCount ?? 0) > 0) {
-              matchedEventItemWithinWindow++;
-            }
-          }
-        });
-        break;
+    workingBoard = workingBoard.filter(t => !groupTiles.some(g => g.id === t.id));
+    let workingContainer = [...container];
+    let anyMatchOccurred = false;
+    let matchedEventItemCount = 0;
+    let matchedEventItemWithinWindow = 0;
+
+    groupTiles.forEach(gTile => {
+      const matchIndex = workingContainer.findLastIndex(t => t.baseIcon === gTile.baseIcon && t.color === gTile.color);
+      if (matchIndex !== -1) {
+        workingContainer.splice(matchIndex + 1, 0, gTile);
+      } else {
+        workingContainer.push(gTile);
       }
-    }
-  });
 
-  // Update chain links
-  const removedIds = new Set(groupTiles.map(t => t.id));
+      for (let i = 0; i <= workingContainer.length - 3; i++) {
+        if (
+          workingContainer[i].baseIcon === workingContainer[i + 1].baseIcon &&
+          workingContainer[i].baseIcon === workingContainer[i + 2].baseIcon &&
+          workingContainer[i].color === workingContainer[i + 1].color &&
+          workingContainer[i].color === workingContainer[i + 2].color
+        ) {
+          const matchedTriplet = workingContainer.splice(i, 3);
+          anyMatchOccurred = true;
+
+          // Count event items in matched triplet
+          matchedTriplet.forEach(mt => {
+            if (mt.mechanic === 'eventItem') {
+              matchedEventItemCount++;
+              if ((mt.crackCount ?? 0) > 0) {
+                matchedEventItemWithinWindow++;
+              }
+            }
+          });
+          break;
+        }
+      }
+    });
+
+    // Update chain links
+    const removedIds = new Set(groupTiles.map(t => t.id));
     workingBoard = workingBoard.map(t => {
       if ((t.mechanic === 'chained1' || t.mechanic === 'chained2') && Array.isArray(t.chainLinks)) {
         const clearedNow = t.chainLinks.filter(id => removedIds.has(id)).length;
@@ -1767,34 +1774,34 @@ export default function App() {
     });
 
     if (anyMatchOccurred) {
-        workingBoard = workingBoard.map(t => {
-          if ((t.mechanic === 'ice2' || t.mechanic === 'ice3') && (t.iceMatchesRemaining || 0) > 0) {
-            const isPhysicallyFree = !isTileCoveredByOther(t, workingBoard) && !isChainLocked(t);
-            if (isPhysicallyFree) {
-              return { ...t, iceMatchesRemaining: t.iceMatchesRemaining - 1 };
-            }
-          }
-          return t;
-        });
-      }
-
-      // EVENT ITEM: decrement crackCount for all event items (each match ticks all of them)
       workingBoard = workingBoard.map(t => {
-        if (t.mechanic === 'eventItem' && t.isEventItemActive && (t.movesRemaining ?? 0) > 0) {
-          const newRemaining = (t.movesRemaining || 0) - 1;
-          if (newRemaining <= 0) {
-            // Time expired → turn into normal tile (icon + color retained)
-            return {
-              ...t,
-              movesRemaining: 0,
-              isEventItemActive: false,
-              mechanic: 'normal'
-            };
+        if ((t.mechanic === 'ice2' || t.mechanic === 'ice3') && (t.iceMatchesRemaining || 0) > 0) {
+          const isPhysicallyFree = !isTileCoveredByOther(t, workingBoard) && !isChainLocked(t);
+          if (isPhysicallyFree) {
+            return { ...t, iceMatchesRemaining: t.iceMatchesRemaining - 1 };
           }
-          return { ...t, movesRemaining: newRemaining };
         }
         return t;
       });
+    }
+
+    // EVENT ITEM: decrement crackCount for all event items (each match ticks all of them)
+    workingBoard = workingBoard.map(t => {
+      if (t.mechanic === 'eventItem' && t.isEventItemActive && (t.movesRemaining ?? 0) > 0) {
+        const newRemaining = (t.movesRemaining || 0) - 1;
+        if (newRemaining <= 0) {
+          // Time expired → turn into normal tile (icon + color retained)
+          return {
+            ...t,
+            movesRemaining: 0,
+            isEventItemActive: false,
+            mechanic: 'normal'
+          };
+        }
+        return { ...t, movesRemaining: newRemaining };
+      }
+      return t;
+    });
 
     // Award event item collection points
     if (matchedEventItemCount > 0) {
@@ -2064,86 +2071,86 @@ export default function App() {
       }
 
       return item;
-  });
+    });
 
-  // ─────────────────────────────────────────────────────────────
-  // STEP 5: Serialize gifts (separate from tiles, fractional z)
-  // ─────────────────────────────────────────────────────────────
-  const serializedGiftItems = rawGifts.map(gift => {
-    const size = GIFT_SIZES[gift.mechanic] || { cols: 2, rows: 1 };
+    // ─────────────────────────────────────────────────────────────
+    // STEP 5: Serialize gifts (separate from tiles, fractional z)
+    // ─────────────────────────────────────────────────────────────
+    const serializedGiftItems = rawGifts.map(gift => {
+      const size = GIFT_SIZES[gift.mechanic] || { cols: 2, rows: 1 };
+      return {
+        entity_type: 'gift',
+        gift_id: gift.id,
+        x: gift.x,
+        y: gift.y,
+        z: gift.z,               // Fractional (0.5, 1.5, 2.5, 3.5, 4.5)
+        size: { cols: size.cols, rows: size.rows }
+      };
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP 6: Combine + sort (by z ascending, specials last within same z)
+    // ─────────────────────────────────────────────────────────────
+    const combined = [...serializedTileItems, ...serializedGiftItems];
+
+    const sortedSerializedItems = combined.sort((a, b) => {
+      if (a.z !== b.z) return a.z - b.z;
+
+      const aIsSpecial = !!a.special_mechanic;
+      const bIsSpecial = !!b.special_mechanic;
+      if (aIsSpecial !== bIsSpecial) {
+        return aIsSpecial ? 1 : -1;
+      }
+      return 0;
+    });
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP 7: Compute metadata
+    // ─────────────────────────────────────────────────────────────
+    const totalTilesCount = serializedTileItems.length;
+    const totalGiftsCount = serializedGiftItems.length;
+    const totalEventItemsCount = resolvedTiles.filter(t => t.mechanic === 'eventItem').length;
+    const maxZ = sortedSerializedItems.length > 0
+      ? Math.max(...sortedSerializedItems.map(t => t.z))
+      : 0;
+
+    // baseAvailability đã được khai báo ở component scope — không cần khai báo lại
+    const boosterBand = getBoosterBand(levelNum);
+    const boosterCap = BOOSTER_CAPS[boosterBand] || null;
+    const boosterMedian = BOOSTER_MEDIANS[boosterBand] || null;
+
     return {
-      entity_type: 'gift',
-      gift_id: gift.id,
-      x: gift.x,
-      y: gift.y,
-      z: gift.z,               // Fractional (0.5, 1.5, 2.5, 3.5, 4.5)
-      size: { cols: size.cols, rows: size.rows }
+      level_id: levelNum,
+      icon_format: themeIconRegistry ? 'registry' : 'legacy',
+      difficulty: {
+        difficulty_mod_band: difficultyMod,
+        variants_pool_size: modConfig.variants,
+        distribution_pattern: distributionPattern,
+        icon_color_ratios: iconColorRatio,
+        initial_matches_on_start: modConfig.startingMatches,
+        multiplier: modConfig.multiplier
+      },
+      boosters: {
+        preset: boosterPreset,
+        availability: baseAvailability,
+        band: boosterBand,
+        economy: boosterCap ? {
+          cap: boosterCap,
+          median: boosterMedian,
+          rewardEasyMedium: { undo: 1 },
+          rewardHardPlus: { magnet: 1, swap: 1 }
+        } : null
+      },
+      map_info: {
+        total_tiles: totalTilesCount,
+        total_gifts: totalGiftsCount,
+        total_event_items: totalEventItemsCount,
+        max_z_layers: maxZ + 1,
+        tiles: sortedSerializedItems
+      },
+      dev_note: "Generated via TilesBuilderTester Engine. Gifts are separate goal entities on fractional gift layers (0.5, 1.5, ...). Tiles use integer layers. Event Items require 4 matches; award 2 points while active, 1 point after. Boosters follow base + accumulator model."
     };
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // STEP 6: Combine + sort (by z ascending, specials last within same z)
-  // ─────────────────────────────────────────────────────────────
-  const combined = [...serializedTileItems, ...serializedGiftItems];
-
-  const sortedSerializedItems = combined.sort((a, b) => {
-    if (a.z !== b.z) return a.z - b.z;
-
-    const aIsSpecial = !!a.special_mechanic;
-    const bIsSpecial = !!b.special_mechanic;
-    if (aIsSpecial !== bIsSpecial) {
-      return aIsSpecial ? 1 : -1;
-    }
-    return 0;
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // STEP 7: Compute metadata
-  // ─────────────────────────────────────────────────────────────
-  const totalTilesCount = serializedTileItems.length;
-  const totalGiftsCount = serializedGiftItems.length;
-  const totalEventItemsCount = resolvedTiles.filter(t => t.mechanic === 'eventItem').length;
-  const maxZ = sortedSerializedItems.length > 0
-    ? Math.max(...sortedSerializedItems.map(t => t.z))
-    : 0;
-
-  // baseAvailability đã được khai báo ở component scope — không cần khai báo lại
-  const boosterBand = getBoosterBand(levelNum);
-  const boosterCap = BOOSTER_CAPS[boosterBand] || null;
-  const boosterMedian = BOOSTER_MEDIANS[boosterBand] || null;
-
-  return {
-    level_id: levelNum,
-    icon_format: themeIconRegistry ? 'registry' : 'legacy',
-    difficulty: {
-      difficulty_mod_band: difficultyMod,
-      variants_pool_size: modConfig.variants,
-      distribution_pattern: distributionPattern,
-      icon_color_ratios: iconColorRatio,
-      initial_matches_on_start: modConfig.startingMatches,
-      multiplier: modConfig.multiplier
-    },
-    boosters: {
-      preset: boosterPreset,
-      availability: baseAvailability,
-      band: boosterBand,
-      economy: boosterCap ? {
-        cap: boosterCap,
-        median: boosterMedian,
-        rewardEasyMedium: { undo: 1 },
-        rewardHardPlus: { magnet: 1, swap: 1 }
-      } : null
-    },
-    map_info: {
-      total_tiles: totalTilesCount,
-      total_gifts: totalGiftsCount,
-      total_event_items: totalEventItemsCount,
-      max_z_layers: maxZ + 1,
-      tiles: sortedSerializedItems
-    },
-    dev_note: "Generated via TilesBuilderTester Engine. Gifts are separate goal entities on fractional gift layers (0.5, 1.5, ...). Tiles use integer layers. Event Items require 4 matches; award 2 points while active, 1 point after. Boosters follow base + accumulator model."
-  };
-}, [tiles, levelNum, difficultyMod, difficultyMods, distributionPattern,
+  }, [tiles, levelNum, difficultyMod, difficultyMods, distributionPattern,
     iconColorRatio, boosterPreset, boosterCustom, themeIconRegistry, currentIconBudget]);
 
   const buildBytesPayload = useMemo(() => {
@@ -2160,7 +2167,7 @@ export default function App() {
       };
     }
   }, [buildExportJsonPayload]);
-  
+
   const handleDownloadJson = () => {
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(buildExportJsonPayload, null, 2));
     const downloadAnchor = document.createElement('a');
@@ -2191,7 +2198,7 @@ export default function App() {
       alert(`Không thể export .bytes:\n${buildBytesPayload._error}`);
       return;
     }
-    
+
     const jsonString = JSON.stringify(buildBytesPayload, null, 2);
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(jsonString);
     const downloadAnchor = document.createElement('a');
@@ -2207,7 +2214,7 @@ export default function App() {
       alert(`Không thể copy .bytes:\n${buildBytesPayload._error}`);
       return;
     }
-    
+
     const jsonString = JSON.stringify(buildBytesPayload, null, 2);
     const textarea = document.createElement('textarea');
     textarea.value = jsonString;
@@ -2216,9 +2223,9 @@ export default function App() {
     try {
       document.execCommand('copy');
       alert(`Đã copy .bytes (Level ${levelNum}) vào clipboard!\n` +
-            `Tiles: ${buildBytesPayload.tiles.length}\n` +
-            `Gifts: ${buildBytesPayload.gifts.length}\n` +
-            `Difficulty: ${buildBytesPayload.DifficultyNew}`);
+        `Tiles: ${buildBytesPayload.tiles.length}\n` +
+        `Gifts: ${buildBytesPayload.gifts.length}\n` +
+        `Difficulty: ${buildBytesPayload.DifficultyNew}`);
     } catch (err) {
       console.error('Copy failed', err);
     }
@@ -2237,14 +2244,14 @@ export default function App() {
     const defaultCapInventory = BOOSTER_CAPS[band] || { undo: 0, magnet: 0, swap: 0, slotExpand: 0 };
     const defaultCapRelief = calculateBoosterRelief(defaultCapInventory);
     const defaultCapMultiplier = calculateBoosterMultiplier(defaultCapRelief);
-    
+
     const defaultStats = {
       total: 0, staticTotal: 0, coreSubtotal: 0, specialSubtotal: 0,
       breakdown: { tileCount: 0, icons: 0, colors: 0, stackCovers: 0, diagCovers: 0, mechanics: 0, maiPenalty: 0 },
       mai: WEIGHTS.mai.sweetSpot.toFixed(2),
       startingMatchesCount: 0, stackCoversCount: 0, diagCoversCount: 0,
       iconQuantities: {}, colorQuantities: {}, mechanicCounts: {},
-      
+
       // ─── Booster fields (để tránh undefined khi render) ───
       boosterBand: band,
       baseRelief: defaultBaseRelief,
@@ -2258,7 +2265,10 @@ export default function App() {
       capBoosterScore: 0,
       baseAvailability,
       medianInventory: defaultMedianInventory,
-      capInventory: defaultCapInventory
+      capInventory: defaultCapInventory,
+
+      comboTriplets: {},
+      iconAggregated: {},
     };
 
     if (!activeTiles || activeTiles.length === 0) return defaultStats;
@@ -2372,6 +2382,51 @@ export default function App() {
     // Legacy: finalScore giữ nguyên để backward-compatible với UI hiện tại
     const finalScore = staticWithMod;
 
+    const comboTriplets = {}; // key: `${themeId}_${iconId}` → { themeId, iconId, tiles, triplets, remainder }
+
+    if (themeIconRegistry) {
+      activeTiles.forEach(t => {
+        if (t.mechanic === 'eventItem') return; // eventItem không tính vào combo
+        const themeId = t.themeID || 'theme00';
+        const iconId = t.assignedIconId ?? t._assignedIconId;
+        if (iconId === undefined || iconId === null) return;
+
+        const key = `${themeId}_${iconId}`;
+        if (!comboTriplets[key]) {
+          comboTriplets[key] = { themeId, iconId, tiles: 0, triplets: 0, remainder: 0 };
+        }
+        comboTriplets[key].tiles += 1;
+      });
+
+      // Tính số bộ & remainder
+      Object.values(comboTriplets).forEach(c => {
+        c.triplets = Math.floor(c.tiles / 3);
+        c.remainder = c.tiles % 3;
+      });
+    }
+
+    const iconAggregated = {};
+    Object.values(comboTriplets).forEach(c => {
+      const key = String(c.iconId);
+      if (!iconAggregated[key]) {
+        iconAggregated[key] = {
+          iconId: c.iconId,
+          tiles: 0,
+          triplets: 0,
+          remainder: 0,
+          themes: [],   // lưu theme nào dùng icon này
+        };
+      }
+      iconAggregated[key].tiles += c.tiles;
+      iconAggregated[key].triplets += c.triplets;
+      iconAggregated[key].themes.push(c.themeId);
+    });
+
+    // Recompute remainder sau khi cộng dồn
+    Object.values(iconAggregated).forEach(a => {
+      a.remainder = a.tiles % 3;
+    });
+
     return {
       total: finalScore,                          // giữ nguyên cho backward compat
       staticTotal, coreSubtotal, specialSubtotal, breakdown,
@@ -2379,7 +2434,7 @@ export default function App() {
       startingMatchesCount: modConfig.startingMatches,
       stackCoversCount, diagCoversCount,
       iconQuantities, colorQuantities, mechanicCounts,
-      
+
       // NEW: Booster data
       boosterBand: band,
       baseRelief,
@@ -2393,239 +2448,241 @@ export default function App() {
       capBoosterScore,
       baseAvailability,
       medianInventory,
-      capInventory
+      capInventory,
+      comboTriplets,
+      iconAggregated,
     };
   }, [tiles, playTiles, mode, levelNum, difficultyMod, difficultyMods,
     distributionPattern, hybridSub1, hybridSub2, iconColorRatio,
     boosterPreset, boosterCustom, themeIconRegistry, currentIconBudget]);
-  
-    const validateImportJson = (jsonString) => {
-      const errors = [];
-      let parsed = null;
 
-      // 1. Parse JSON
-      try {
-        parsed = JSON.parse(jsonString);
-      } catch (e) {
-        return { valid: false, errors: [`Invalid JSON syntax: ${e.message}`], data: null };
-      }
+  const validateImportJson = (jsonString) => {
+    const errors = [];
+    let parsed = null;
 
-      // ═══════════════════════════════════════════════════════════
-      // 1b. Detect icon format — ưu tiên flag, fallback auto-detect
-      // ═══════════════════════════════════════════════════════════
-      // - File export mới (từ tool hiện tại): có icon_format = 'registry' | 'legacy'
-      // - File cũ (trước khi có flag): auto-detect từ tile đầu tiên
-      let isRegistryFormat = false;
-      let formatSource = 'default';
+    // 1. Parse JSON
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch (e) {
+      return { valid: false, errors: [`Invalid JSON syntax: ${e.message}`], data: null };
+    }
 
-      if (parsed.icon_format === 'registry') {
+    // ═══════════════════════════════════════════════════════════
+    // 1b. Detect icon format — ưu tiên flag, fallback auto-detect
+    // ═══════════════════════════════════════════════════════════
+    // - File export mới (từ tool hiện tại): có icon_format = 'registry' | 'legacy'
+    // - File cũ (trước khi có flag): auto-detect từ tile đầu tiên
+    let isRegistryFormat = false;
+    let formatSource = 'default';
+
+    if (parsed.icon_format === 'registry') {
+      isRegistryFormat = true;
+      formatSource = 'flag';
+    } else if (parsed.icon_format === 'legacy') {
+      isRegistryFormat = false;
+      formatSource = 'flag';
+    } else if (parsed.map_info?.tiles) {
+      // Fallback: inspect first non-gift tile
+      const firstTile = parsed.map_info.tiles.find(
+        t => t.entity_type !== 'gift'
+      );
+      if (firstTile && typeof firstTile.icon === 'number') {
         isRegistryFormat = true;
-        formatSource = 'flag';
-      } else if (parsed.icon_format === 'legacy') {
+        formatSource = 'auto-detect';
+      } else {
         isRegistryFormat = false;
-        formatSource = 'flag';
-      } else if (parsed.map_info?.tiles) {
-        // Fallback: inspect first non-gift tile
-        const firstTile = parsed.map_info.tiles.find(
-          t => t.entity_type !== 'gift'
-        );
-        if (firstTile && typeof firstTile.icon === 'number') {
-          isRegistryFormat = true;
-          formatSource = 'auto-detect';
-        } else {
-          isRegistryFormat = false;
-          formatSource = 'auto-detect';
-        }
+        formatSource = 'auto-detect';
       }
+    }
 
-      // 2. Check top-level structure
-      if (!parsed.map_info || !Array.isArray(parsed.map_info.tiles)) {
-        errors.push('Missing or invalid "map_info.tiles" array');
-        return { valid: false, errors, data: null };
-      }
+    // 2. Check top-level structure
+    if (!parsed.map_info || !Array.isArray(parsed.map_info.tiles)) {
+      errors.push('Missing or invalid "map_info.tiles" array');
+      return { valid: false, errors, data: null };
+    }
 
-      const rawEntries = parsed.map_info.tiles;
-      if (rawEntries.length === 0) {
-        errors.push('Tile array is empty');
-        return { valid: false, errors, data: null };
-      }
+    const rawEntries = parsed.map_info.tiles;
+    if (rawEntries.length === 0) {
+      errors.push('Tile array is empty');
+      return { valid: false, errors, data: null };
+    }
 
-      // Split entries by entity_type so we can validate each properly
-      const rawGiftEntries = rawEntries.filter(e => e.entity_type === 'gift');
-      const rawTileEntries = rawEntries.filter(e => e.entity_type !== 'gift');
+    // Split entries by entity_type so we can validate each properly
+    const rawGiftEntries = rawEntries.filter(e => e.entity_type === 'gift');
+    const rawTileEntries = rawEntries.filter(e => e.entity_type !== 'gift');
 
-      // Divisible-by-3 rule applies ONLY to tiles (gifts are objectives, not matchable)
-      if (rawTileEntries.length % 3 !== 0) {
-        errors.push(`Tile count (${rawTileEntries.length}) must be divisible by 3 (gifts excluded — found ${rawGiftEntries.length} gifts)`);
-      }
+    // Divisible-by-3 rule applies ONLY to tiles (gifts are objectives, not matchable)
+    if (rawTileEntries.length % 3 !== 0) {
+      errors.push(`Tile count (${rawTileEntries.length}) must be divisible by 3 (gifts excluded — found ${rawGiftEntries.length} gifts)`);
+    }
 
-      // 3. Validate each tile
-      // 3. Validate each entry — split tiles and gifts
-      const validMechanics = ['chained1', 'chained2', 'ice2', 'ice3', 'combined', 'hidden', 'eventItem'];
-      const validGiftTypes = ['gift2x1', 'gift2x2', 'gift2x3'];
-      const validatedTiles = [];
-      const validatedGifts = [];
-      const tileIdMap = new Map();
+    // 3. Validate each tile
+    // 3. Validate each entry — split tiles and gifts
+    const validMechanics = ['chained1', 'chained2', 'ice2', 'ice3', 'combined', 'hidden', 'eventItem'];
+    const validGiftTypes = ['gift2x1', 'gift2x2', 'gift2x3'];
+    const validatedTiles = [];
+    const validatedGifts = [];
+    const tileIdMap = new Map();
 
-      rawEntries.forEach((t, idx) => {
-        // ─────────────────────────────────────────────────────────────
-        // GIFT ENTITY
-        // ─────────────────────────────────────────────────────────────
-        if (t.entity_type === 'gift') {
-          const prefix = `Gift[${idx}] (id=${t.gift_id ?? 'missing'})`;
+    rawEntries.forEach((t, idx) => {
+      // ─────────────────────────────────────────────────────────────
+      // GIFT ENTITY
+      // ─────────────────────────────────────────────────────────────
+      if (t.entity_type === 'gift') {
+        const prefix = `Gift[${idx}] (id=${t.gift_id ?? 'missing'})`;
 
-          if (typeof t.gift_id === 'undefined') errors.push(`${prefix}: missing gift_id`);
-          if (typeof t.x !== 'number' || t.x < 0 || t.x > 22) errors.push(`${prefix}: invalid x (${t.x})`);
-          if (typeof t.y !== 'number' || t.y < 0 || t.y > 22) errors.push(`${prefix}: invalid y (${t.y})`);
-          if (typeof t.z !== 'number' || t.z < 0 || t.z > 5) errors.push(`${prefix}: invalid z (${t.z})`);
-          
-          // Gift z must be fractional (0.5, 1.5, ...)
-          if (typeof t.z === 'number' && t.z % 1 !== 0.5) {
-            errors.push(`${prefix}: gift z must be a fractional layer (X.5), got ${t.z}`);
-          }
-
-          // Validate size
-          if (!t.size || typeof t.size.cols !== 'number' || typeof t.size.rows !== 'number') {
-            errors.push(`${prefix}: missing or invalid size { cols, rows }`);
-          } else {
-            const { cols, rows } = t.size;
-            const validSizes = [
-              { cols: 2, rows: 1 },
-              { cols: 2, rows: 2 },
-              { cols: 2, rows: 3 }
-            ];
-            const matchesValidSize = validSizes.some(s => s.cols === cols && s.rows === rows);
-            if (!matchesValidSize) {
-              errors.push(`${prefix}: unsupported gift size ${cols}×${rows} (must be 2×1, 2×2, or 2×3)`);
-            }
-          }
-
-          validatedGifts.push({
-            entity_type: 'gift',
-            gift_id: t.gift_id,
-            x: t.x,
-            y: t.y,
-            z: t.z,
-            size: t.size
-          });
-          return; // Skip tile validation
-        }
-
-        // ─────────────────────────────────────────────────────────────
-        // TILE ENTITY (existing logic)
-        // ─────────────────────────────────────────────────────────────
-        const prefix = `Tile[${idx}] (id=${t.tile_id ?? 'missing'})`;
-
-        // Required fields
-        if (typeof t.tile_id === 'undefined') errors.push(`${prefix}: missing tile_id`);
+        if (typeof t.gift_id === 'undefined') errors.push(`${prefix}: missing gift_id`);
         if (typeof t.x !== 'number' || t.x < 0 || t.x > 22) errors.push(`${prefix}: invalid x (${t.x})`);
         if (typeof t.y !== 'number' || t.y < 0 || t.y > 22) errors.push(`${prefix}: invalid y (${t.y})`);
         if (typeof t.z !== 'number' || t.z < 0 || t.z > 5) errors.push(`${prefix}: invalid z (${t.z})`);
 
-        // Tile z must be integer
-        if (typeof t.z === 'number' && t.z % 1 !== 0) {
-          errors.push(`${prefix}: tile z must be an integer, got ${t.z}`);
+        // Gift z must be fractional (0.5, 1.5, ...)
+        if (typeof t.z === 'number' && t.z % 1 !== 0.5) {
+          errors.push(`${prefix}: gift z must be a fractional layer (X.5), got ${t.z}`);
         }
 
-        // Icon/color are optional — will be replaced with placeholders
-        // Icon/color validation — support both legacy (string) and registry (number) formats
-        // ═══════════════════════════════════════════════════════════
-        // Icon/color validation — context-aware theo format
-        // ═══════════════════════════════════════════════════════════
-        if (isRegistryFormat) {
-          // ─── Registry mode: icon = positive integer, color = null ───
-          if (t.icon !== undefined && t.icon !== null) {
-            const valid = typeof t.icon === 'number' && Number.isInteger(t.icon) && t.icon > 0;
-            if (!valid) {
-              errors.push(`${prefix}: registry format requires icon as positive integer, got ${t.icon}`);
-            }
-          }
-          if (t.color !== undefined && t.color !== null) {
-            errors.push(`${prefix}: registry format requires color=null, got ${t.color}`);
-          }
+        // Validate size
+        if (!t.size || typeof t.size.cols !== 'number' || typeof t.size.rows !== 'number') {
+          errors.push(`${prefix}: missing or invalid size { cols, rows }`);
         } else {
-          // ─── Legacy mode: icon/color = string ───
-          // Cho phép cả number để tương thích ngược (file cũ auto-detect nhầm)
-          if (t.icon !== undefined && t.icon !== null) {
-            const iconIsString = typeof t.icon === 'string';
-            const iconIsNumber = typeof t.icon === 'number' && Number.isInteger(t.icon) && t.icon > 0;
-            if (!iconIsString && !iconIsNumber) {
-              errors.push(`${prefix}: icon must be string (legacy) or positive integer (registry), got ${typeof t.icon}`);
-            }
-          }
-          if (t.color !== undefined && t.color !== null) {
-            if (typeof t.color !== 'string') {
-              errors.push(`${prefix}: color must be string or null, got ${typeof t.color}`);
-            }
+          const { cols, rows } = t.size;
+          const validSizes = [
+            { cols: 2, rows: 1 },
+            { cols: 2, rows: 2 },
+            { cols: 2, rows: 3 }
+          ];
+          const matchesValidSize = validSizes.some(s => s.cols === cols && s.rows === rows);
+          if (!matchesValidSize) {
+            errors.push(`${prefix}: unsupported gift size ${cols}×${rows} (must be 2×1, 2×2, or 2×3)`);
           }
         }
 
-        // Validate special_mechanic if present
-        let mechanic = 'normal';
-        let mechanicData = null;
-
-        if (t.special_mechanic) {
-          if (!t.special_mechanic.name) {
-            errors.push(`${prefix}: special_mechanic missing "name"`);
-          } else if (!validMechanics.includes(t.special_mechanic.name)) {
-            errors.push(`${prefix}: unknown mechanic "${t.special_mechanic.name}"`);
-          } else {
-            mechanic = t.special_mechanic.name;
-            mechanicData = t.special_mechanic;
-
-            if (mechanic === 'chained1' || mechanic === 'chained2') {
-              if (!Array.isArray(mechanicData.chain_links) || mechanicData.chain_links.length === 0) {
-                errors.push(`${prefix}: chained tile requires "chain_links" array`);
-              }
-            }
-            if (mechanic === 'combined' && !mechanicData.combine_group_id) {
-              errors.push(`${prefix}: combined tile requires "combine_group_id"`);
-            }
-            if (mechanic === 'eventItem') {
-              const movesReq = mechanicData.moves_required ?? mechanicData.matches_required;
-              if (typeof movesReq !== 'number' || movesReq < 1) {
-                errors.push(`${prefix}: eventItem requires "moves_required" (number ≥ 1)`);
-              }
-            }
-          }
-        }
-
-        tileIdMap.set(t.tile_id, { ...t, mechanic, mechanicData });
-        validatedTiles.push({ ...t, mechanic, mechanicData });
-      });
-
-      // 4. Validate chain_links reference existing tile_ids
-      validatedTiles.forEach(t => {
-        if ((t.mechanic === 'chained1' || t.mechanic === 'chained2') && t.mechanicData?.chain_links) {
-          t.mechanicData.chain_links.forEach(linkId => {
-            if (!tileIdMap.has(linkId)) {
-              errors.push(`Tile[${t.tile_id}]: chain link references missing tile_id "${linkId}"`);
-            }
-          });
-        }
-      });
-
-      // 5. Validate eventItem leaf count = 3 if any
-      const eventItemCount = validatedTiles.filter(t => t.mechanic === 'eventItem').length;
-      if (eventItemCount !== 0 && eventItemCount !== 3) {
-        errors.push(`eventItem Leaf tiles must be exactly 0 or 3 (found ${eventItemCount})`);
+        validatedGifts.push({
+          entity_type: 'gift',
+          gift_id: t.gift_id,
+          x: t.x,
+          y: t.y,
+          z: t.z,
+          size: t.size
+        });
+        return; // Skip tile validation
       }
 
-      if (errors.length > 0) {
-        return { valid: false, errors, data: null };
+      // ─────────────────────────────────────────────────────────────
+      // TILE ENTITY (existing logic)
+      // ─────────────────────────────────────────────────────────────
+      const prefix = `Tile[${idx}] (id=${t.tile_id ?? 'missing'})`;
+
+      // Required fields
+      if (typeof t.tile_id === 'undefined') errors.push(`${prefix}: missing tile_id`);
+      if (typeof t.x !== 'number' || t.x < 0 || t.x > 22) errors.push(`${prefix}: invalid x (${t.x})`);
+      if (typeof t.y !== 'number' || t.y < 0 || t.y > 22) errors.push(`${prefix}: invalid y (${t.y})`);
+      if (typeof t.z !== 'number' || t.z < 0 || t.z > 5) errors.push(`${prefix}: invalid z (${t.z})`);
+
+      // Tile z must be integer
+      if (typeof t.z === 'number' && t.z % 1 !== 0) {
+        errors.push(`${prefix}: tile z must be an integer, got ${t.z}`);
       }
 
-      return { 
-        valid: true, 
-        errors: [], 
-        data: { 
-          parsed, 
-          tiles: validatedTiles,
-          gifts: validatedGifts,
-          isRegistryFormat,
-          formatSource,   // 'flag' | 'auto-detect' | 'default'
+      // Icon/color are optional — will be replaced with placeholders
+      // Icon/color validation — support both legacy (string) and registry (number) formats
+      // ═══════════════════════════════════════════════════════════
+      // Icon/color validation — context-aware theo format
+      // ═══════════════════════════════════════════════════════════
+      if (isRegistryFormat) {
+        // ─── Registry mode: icon = positive integer, color = null ───
+        if (t.icon !== undefined && t.icon !== null) {
+          const valid = typeof t.icon === 'number' && Number.isInteger(t.icon) && t.icon > 0;
+          if (!valid) {
+            errors.push(`${prefix}: registry format requires icon as positive integer, got ${t.icon}`);
+          }
         }
-      };
+        if (t.color !== undefined && t.color !== null) {
+          errors.push(`${prefix}: registry format requires color=null, got ${t.color}`);
+        }
+      } else {
+        // ─── Legacy mode: icon/color = string ───
+        // Cho phép cả number để tương thích ngược (file cũ auto-detect nhầm)
+        if (t.icon !== undefined && t.icon !== null) {
+          const iconIsString = typeof t.icon === 'string';
+          const iconIsNumber = typeof t.icon === 'number' && Number.isInteger(t.icon) && t.icon > 0;
+          if (!iconIsString && !iconIsNumber) {
+            errors.push(`${prefix}: icon must be string (legacy) or positive integer (registry), got ${typeof t.icon}`);
+          }
+        }
+        if (t.color !== undefined && t.color !== null) {
+          if (typeof t.color !== 'string') {
+            errors.push(`${prefix}: color must be string or null, got ${typeof t.color}`);
+          }
+        }
+      }
+
+      // Validate special_mechanic if present
+      let mechanic = 'normal';
+      let mechanicData = null;
+
+      if (t.special_mechanic) {
+        if (!t.special_mechanic.name) {
+          errors.push(`${prefix}: special_mechanic missing "name"`);
+        } else if (!validMechanics.includes(t.special_mechanic.name)) {
+          errors.push(`${prefix}: unknown mechanic "${t.special_mechanic.name}"`);
+        } else {
+          mechanic = t.special_mechanic.name;
+          mechanicData = t.special_mechanic;
+
+          if (mechanic === 'chained1' || mechanic === 'chained2') {
+            if (!Array.isArray(mechanicData.chain_links) || mechanicData.chain_links.length === 0) {
+              errors.push(`${prefix}: chained tile requires "chain_links" array`);
+            }
+          }
+          if (mechanic === 'combined' && !mechanicData.combine_group_id) {
+            errors.push(`${prefix}: combined tile requires "combine_group_id"`);
+          }
+          if (mechanic === 'eventItem') {
+            const movesReq = mechanicData.moves_required ?? mechanicData.matches_required;
+            if (typeof movesReq !== 'number' || movesReq < 1) {
+              errors.push(`${prefix}: eventItem requires "moves_required" (number ≥ 1)`);
+            }
+          }
+        }
+      }
+
+      tileIdMap.set(t.tile_id, { ...t, mechanic, mechanicData });
+      validatedTiles.push({ ...t, mechanic, mechanicData });
+    });
+
+    // 4. Validate chain_links reference existing tile_ids
+    validatedTiles.forEach(t => {
+      if ((t.mechanic === 'chained1' || t.mechanic === 'chained2') && t.mechanicData?.chain_links) {
+        t.mechanicData.chain_links.forEach(linkId => {
+          if (!tileIdMap.has(linkId)) {
+            errors.push(`Tile[${t.tile_id}]: chain link references missing tile_id "${linkId}"`);
+          }
+        });
+      }
+    });
+
+    // 5. Validate eventItem leaf count = 3 if any
+    const eventItemCount = validatedTiles.filter(t => t.mechanic === 'eventItem').length;
+    if (eventItemCount !== 0 && eventItemCount !== 3) {
+      errors.push(`eventItem Leaf tiles must be exactly 0 or 3 (found ${eventItemCount})`);
+    }
+
+    if (errors.length > 0) {
+      return { valid: false, errors, data: null };
+    }
+
+    return {
+      valid: true,
+      errors: [],
+      data: {
+        parsed,
+        tiles: validatedTiles,
+        gifts: validatedGifts,
+        isRegistryFormat,
+        formatSource,   // 'flag' | 'auto-detect' | 'default'
+      }
+    };
   };
 
   const validateThemeRegistryJson = (jsonString) => {
@@ -2705,7 +2762,7 @@ export default function App() {
   const convertImportedToInternalFormat = (validatedTiles, validatedGifts = [], isRegistryFormat = false) => {
     // Assign placeholder icons/colors — only used in legacy mode
     const allPossible = [];
-    Object.keys(ICONS).forEach(icon => 
+    Object.keys(ICONS).forEach(icon =>
       COLORS.forEach(c => allPossible.push({ i: icon, c: c.id }))
     );
 
@@ -2910,7 +2967,7 @@ export default function App() {
           type: 'missing-icons',
           title: `⚠️ ${missingIcons.size} icon ID không có trong registry`,
           detail: [...missingIcons].slice(0, 5).join('\n') +
-                  (missingIcons.size > 5 ? `\n... và ${missingIcons.size - 5} nữa` : ''),
+            (missingIcons.size > 5 ? `\n... và ${missingIcons.size - 5} nữa` : ''),
         });
       }
     }
@@ -3146,9 +3203,9 @@ export default function App() {
     }
 
     if (isPlayMode && !tile.isGift) {
-      const coveringGift = playTiles.find(g => 
-        g.isGift && 
-        g.z < tile.z && 
+      const coveringGift = playTiles.find(g =>
+        g.isGift &&
+        g.z < tile.z &&
         tile.x >= g.x && tile.x <= g.x + (GIFT_SIZES[g.mechanic]?.cols - 1) * 2 &&
         tile.y >= g.y && tile.y <= g.y + (GIFT_SIZES[g.mechanic]?.rows - 1) * 2
       );
@@ -3187,18 +3244,16 @@ export default function App() {
         {overlay}
         {isEdit && activeThemes.length > 1 && tile.themeID && (
           <div
-            className={`absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full border border-slate-900/80 shadow-sm ${
-              THEME_DOT_COLORS[tile.themeID] || 'bg-slate-500'
-            }`}
+            className={`absolute -top-1 -left-1 w-2.5 h-2.5 rounded-full border border-slate-900/80 shadow-sm ${THEME_DOT_COLORS[tile.themeID] || 'bg-slate-500'
+              }`}
             title={tile.themeID}
           />
         )}
         {tile.mechanic === 'eventItem' && (tile.movesRemaining ?? 0) > 0 && (
-          <div className={`absolute -top-1 -right-1 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center z-20 border shadow ${
-            (tile.movesRemaining ?? 0) <= 1
+          <div className={`absolute -top-1 -right-1 text-white text-[9px] font-bold rounded-full w-4 h-4 flex items-center justify-center z-20 border shadow ${(tile.movesRemaining ?? 0) <= 1
               ? 'bg-red-600 border-red-300 animate-pulse'
               : 'bg-amber-600 border-yellow-300'
-          }`}>
+            }`}>
             {tile.movesRemaining}
           </div>
         )}
@@ -3247,17 +3302,16 @@ export default function App() {
               <label className="text-[11px] font-bold text-slate-400 uppercase mb-1 block">
                 {giftPlacementMode ? '🎁 Gift Layer' : 'Z-Layer'}
               </label>
-              
+
               {giftPlacementMode ? (
                 // Gift layer selector
                 <div className="flex gap-0.5 bg-slate-900 p-1 rounded border border-amber-600/50 mb-1.5">
                   {GIFT_LAYERS.map(z => (
                     <button key={z} onClick={() => setActiveGiftLayer(z)}
-                      className={`flex-1 py-1 rounded text-xs font-bold transition-colors ${
-                        activeGiftLayer === z 
-                          ? 'bg-amber-500 text-slate-950' 
+                      className={`flex-1 py-1 rounded text-xs font-bold transition-colors ${activeGiftLayer === z
+                          ? 'bg-amber-500 text-slate-950'
                           : 'text-amber-300/60 hover:bg-slate-800'
-                      }`}>
+                        }`}>
                       {z}
                     </button>
                   ))}
@@ -3267,9 +3321,8 @@ export default function App() {
                 <div className="flex gap-0.5 bg-slate-900 p-1 rounded border border-slate-700 mb-1.5">
                   {[0, 1, 2, 3, 4, 5].map(z => (
                     <button key={z} onClick={() => setActiveLayer(z)}
-                      className={`flex-1 py-1 rounded text-xs font-bold transition-colors ${
-                        activeLayer === z ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:bg-slate-800'
-                      }`}>
+                      className={`flex-1 py-1 rounded text-xs font-bold transition-colors ${activeLayer === z ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:bg-slate-800'
+                        }`}>
                       {z}
                     </button>
                   ))}
@@ -3278,19 +3331,19 @@ export default function App() {
 
               {/* Layer View Mode Toggle */}
               <div className="flex bg-slate-900/80 rounded-md p-0.5 border border-slate-700/50">
-                <button 
+                <button
                   onClick={() => setLayerViewMode('all')}
                   title="Show all layers with active layer highlighted"
                   className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${layerViewMode === 'all' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'}`}>
                   All
                 </button>
-                <button 
+                <button
                   onClick={() => setLayerViewMode('cumulative')}
                   title="Show layers up to active (view build-up)"
                   className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${layerViewMode === 'cumulative' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'}`}>
                   Stack
                 </button>
-                <button 
+                <button
                   onClick={() => setLayerViewMode('isolated')}
                   title="Show ONLY the active layer (clean check)"
                   className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${layerViewMode === 'isolated' ? 'bg-cyan-500 text-slate-950' : 'text-slate-400 hover:text-white'}`}>
@@ -3428,11 +3481,10 @@ export default function App() {
                   onClick={redistributeThemes}
                   disabled={tiles.filter(t => !t.isGift).length === 0}
                   title="Re-roll theme distribution on existing tiles (layout preserved)"
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${
-                    tiles.filter(t => !t.isGift).length === 0
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold border transition-all ${tiles.filter(t => !t.isGift).length === 0
                       ? 'bg-slate-900 border-slate-700 text-slate-600 cursor-not-allowed'
                       : 'bg-cyan-500/20 border-cyan-500/40 hover:bg-cyan-500/30 text-cyan-300'
-                  }`}
+                    }`}
                 >
                   <RefreshCw className="w-3 h-3" /> Redistribute
                 </button>
@@ -3519,9 +3571,8 @@ export default function App() {
                         return anyActive ? next : prev;
                       });
                     }}
-                    className={`w-12 text-left text-[11px] font-bold transition-colors ${
-                      isActive ? 'text-amber-300' : 'text-slate-500 hover:text-slate-300'
-                    }`}
+                    className={`w-12 text-left text-[11px] font-bold transition-colors ${isActive ? 'text-amber-300' : 'text-slate-500 hover:text-slate-300'
+                      }`}
                   >
                     {theme}
                   </button>
@@ -3563,12 +3614,108 @@ export default function App() {
             )}
           </div>
 
+          {themeIconRegistry && (
+            <div className="bg-slate-800/60 border border-purple-500/30 rounded-xl p-3 mb-3 shadow-lg">
+              <h3 className="text-xs font-bold text-purple-300 uppercase border-b border-slate-700 pb-1 mb-2 flex items-center gap-1">
+                <Boxes className="w-3 h-3" /> Combo Inventory
+                <span className="ml-auto text-[9px] text-slate-500 font-mono normal-case">
+                  {Object.keys(difficultyStats.comboTriplets ?? {}).length} combos
+                </span>
+                <button
+                  onClick={() => setShowOnlyUnbalanced(!showOnlyUnbalanced)}
+                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded border transition-colors ${showOnlyUnbalanced
+                      ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                      : 'bg-slate-900 border-slate-700 text-slate-500 hover:text-slate-300'
+                    }`}
+                >
+                  {showOnlyUnbalanced ? 'All' : 'Lệch'}
+                </button>
+              </h3>
+
+              {Object.keys(difficultyStats.comboTriplets ?? {}).length === 0 ? (
+                <p className="text-[10px] text-slate-500 italic text-center py-2">
+                  Chưa có combo nào. Nhấn Redistribute để gán icon.
+                </p>
+              ) : (
+                <>
+                  {/* Header row */}
+                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-1 text-[9px] text-slate-500 font-bold uppercase mb-1 px-1">
+                    <div>Combo</div>
+                    <div className="text-center w-10">Tiles</div>
+                    <div className="text-center w-10">Bộ</div>
+                    <div className="text-center w-10">Dư</div>
+                  </div>
+
+                  {/* Sorted: unbalanced lên đầu, rồi theo theme */}
+                  <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
+                    {Object.values(difficultyStats.comboTriplets ?? {})
+                      .filter(c => !showOnlyUnbalanced || c.remainder > 0)
+                      .sort((a, b) => {
+                        // Ưu tiên hiển thị combo lệch lên đầu
+                        if ((a.remainder > 0) !== (b.remainder > 0)) {
+                          return a.remainder > 0 ? -1 : 1;
+                        }
+                        // Rồi sort theo theme, rồi icon
+                        if (a.themeId !== b.themeId) return a.themeId.localeCompare(b.themeId);
+                        return a.iconId - b.iconId;
+                      })
+                      .map(c => {
+                        const isUnbalanced = c.remainder !== 0;
+                        const themeColor = THEME_DOT_COLORS[c.themeId] || 'bg-slate-500';
+
+                        return (
+                          <div
+                            key={`${c.themeId}_${c.iconId}`}
+                            className={`grid grid-cols-[1fr_auto_auto_auto] gap-1 items-center px-1 py-0.5 rounded text-[10px] font-mono ${isUnbalanced ? 'bg-red-950/40 border border-red-800/50' : 'hover:bg-slate-900/50'
+                              }`}
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <div className={`w-2 h-2 rounded-full ${themeColor} shrink-0`} />
+                              <span className="text-slate-300 truncate">
+                                {c.themeId}
+                              </span>
+                              <span className="text-cyan-400">#{c.iconId}</span>
+                            </div>
+                            <div className="text-center w-10 text-slate-400">{c.tiles}</div>
+                            <div className={`text-center w-10 font-bold ${isUnbalanced ? 'text-red-400' : 'text-green-400'
+                              }`}>
+                              {c.triplets}
+                            </div>
+                            <div className={`text-center w-10 ${isUnbalanced ? 'text-red-400 font-bold' : 'text-slate-600'
+                              }`}>
+                              {c.remainder === 0 ? '—' : c.remainder}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+
+                  {/* Summary footer */}
+                  <div className="mt-2 pt-2 border-t border-slate-700/50 flex justify-between text-[10px]">
+                    <span className="text-slate-500">
+                      Tổng: <span className="text-white font-mono font-bold">
+                        {Object.values(difficultyStats.comboTriplets).reduce((s, c) => s + c.triplets, 0)}
+                      </span> bộ
+                    </span>
+                    {Object.values(difficultyStats.comboTriplets).some(c => c.remainder > 0) ? (
+                      <span className="text-red-400 font-bold">
+                        ⚠ {Object.values(difficultyStats.comboTriplets).filter(c => c.remainder > 0).length} lệch
+                      </span>
+                    ) : (
+                      <span className="text-green-400 font-bold">✓ Balanced</span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="text-[11px] font-bold text-slate-400 uppercase mb-1 block">Special Mechanic</label>
             <div className="grid grid-cols-2 gap-1.5">
               {MECHANICS.map(mech => (
-                <button 
-                  key={mech.id} 
+                <button
+                  key={mech.id}
                   onClick={() => {
                     if (mech.id.startsWith('gift')) {
                       setGiftPlacementMode(mech.id);
@@ -3578,11 +3725,10 @@ export default function App() {
                       setGiftPlacementMode(null);
                     }
                   }}
-                  className={`px-2 py-1.5 rounded text-xs font-bold border flex items-center gap-2 transition-all ${
-                    selectedMechanic === mech.id 
-                      ? 'bg-amber-500/20 border-amber-400 text-amber-300' 
+                  className={`px-2 py-1.5 rounded text-xs font-bold border flex items-center gap-2 transition-all ${selectedMechanic === mech.id
+                      ? 'bg-amber-500/20 border-amber-400 text-amber-300'
                       : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'
-                  }`}>
+                    }`}>
                   <mech.icon className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">{mech.label}</span>
                 </button>
@@ -3606,9 +3752,9 @@ export default function App() {
             <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wide flex items-center gap-1">
               <Zap className="w-3 h-3" /> Booster Preset
             </label>
-            
-            <select 
-              value={boosterPreset} 
+
+            <select
+              value={boosterPreset}
               onChange={(e) => setBoosterPreset(e.target.value)}
               className="w-full bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-white outline-none focus:border-amber-500 text-xs font-medium"
             >
@@ -3616,15 +3762,15 @@ export default function App() {
                 <option key={k} value={k}>{v.label}</option>
               ))}
             </select>
-            
+
             {boosterPreset === 'custom' && (
               <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800 mt-2">
                 {Object.entries(BOOSTER_TYPES).map(([key, config]) => (
                   <div key={key} className="flex flex-col">
                     <span className="text-[9px] text-slate-400 mb-0.5">{config.label}</span>
-                    <input 
-                      type="number" 
-                      min="0" 
+                    <input
+                      type="number"
+                      min="0"
                       max="20"
                       value={boosterCustom[key]}
                       onChange={(e) => {
@@ -3637,7 +3783,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            
+
             {boosterPreset !== 'custom' && baseAvailability && (
               <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-400 mt-2 pt-2 border-t border-slate-800">
                 <div>Undo: <strong className="text-white font-mono">{baseAvailability.undo}</strong></div>
@@ -3672,7 +3818,7 @@ export default function App() {
           {mode === 'play' && (
             <div className="flex-1 flex justify-center mx-8">
               <div className="flex items-center gap-2 bg-slate-700 p-2 rounded-xl border-b-4 border-slate-900 shadow-inner min-w-[320px] justify-start">
-                
+
                 {/* 7-slot grid */}
                 <div className="flex gap-2">
                   {[...Array(7 + slotExpandUsed)].map((_, i) => (
@@ -3715,7 +3861,7 @@ export default function App() {
                         </span>
                       </div>
                     )}
-                    
+
                   </div>
                 )}
               </div>
@@ -3727,33 +3873,32 @@ export default function App() {
                 <button
                   key={key}
                   onClick={() => setViewportPreset(key)}
-                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${
-                    viewportPreset === key
+                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${viewportPreset === key
                       ? 'bg-cyan-500 text-slate-950'
                       : 'text-slate-400 hover:text-white'
-                  }`}
+                    }`}
                 >
                   {preset.label}
                 </button>
               ))}
             </div>
             {mode === 'edit' && (
-                <>
-                  <button onClick={() => setIsImportModalOpen(true)}
-                    className="flex items-center gap-1.5 bg-purple-500/20 border border-purple-500/40 hover:bg-purple-500/30 text-purple-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
-                    <Upload className="w-4 h-4" /> Import JSON
-                  </button>
-                  <button onClick={() => setIsExportModalOpen(true)}
-                    className="flex items-center gap-1.5 bg-cyan-500/20 border border-cyan-500/40 hover:bg-cyan-500/30 text-cyan-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
-                    <Download className="w-4 h-4" /> Export Level JSON
-                  </button>
-                  <button onClick={() => setIsBytesModalOpen(true)}
-                    className="flex items-center gap-1.5 bg-orange-500/20 border border-orange-500/40 hover:bg-orange-500/30 text-orange-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
-                    <Download className="w-4 h-4" /> Export .bytes
-                  </button>
-                </>
+              <>
+                <button onClick={() => setIsImportModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-purple-500/20 border border-purple-500/40 hover:bg-purple-500/30 text-purple-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
+                  <Upload className="w-4 h-4" /> Import JSON
+                </button>
+                <button onClick={() => setIsExportModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-cyan-500/20 border border-cyan-500/40 hover:bg-cyan-500/30 text-cyan-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
+                  <Download className="w-4 h-4" /> Export Level JSON
+                </button>
+                <button onClick={() => setIsBytesModalOpen(true)}
+                  className="flex items-center gap-1.5 bg-orange-500/20 border border-orange-500/40 hover:bg-orange-500/30 text-orange-300 px-4 py-2 rounded-lg text-xs font-bold transition-all shadow">
+                  <Download className="w-4 h-4" /> Export .bytes
+                </button>
+              </>
             )}
-            
+
             {mode === 'edit' ? (
               <button onClick={isPlayable ? startPlayMode : undefined}
                 className={`flex items-center gap-2 font-bold px-6 py-2 rounded-lg transition-all ${isPlayable ? 'bg-green-500 hover:bg-green-400 text-slate-900 shadow-lg shadow-green-500/20' : 'bg-slate-600 text-slate-400 cursor-not-allowed'}`}>
@@ -3761,14 +3906,13 @@ export default function App() {
               </button>
             ) : (
               <div className="flex gap-2">
-                <button 
+                <button
                   onClick={() => setShowAnalyticsInPlay(!showAnalyticsInPlay)}
                   title={showAnalyticsInPlay ? 'Hide Analytics Panel' : 'Show Analytics Panel'}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all border ${
-                    showAnalyticsInPlay 
-                      ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30' 
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all border ${showAnalyticsInPlay
+                      ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30'
                       : 'bg-slate-700 border-slate-600 text-slate-400 hover:bg-slate-600'
-                  }`}
+                    }`}
                 >
                   <Activity className="w-4 h-4" />
                   {showAnalyticsInPlay ? 'Hide' : 'Show'}
@@ -3840,11 +3984,10 @@ export default function App() {
                   onClick={handleUndo}
                   disabled={boosterInventory.undo <= 0 || container.length === 0}
                   title="Undo: Revert last tile from tray"
-                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
-                    boosterInventory.undo > 0 && container.length > 0
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${boosterInventory.undo > 0 && container.length > 0
                       ? 'bg-blue-500/20 border-2 border-blue-500/50 hover:bg-blue-500/30 hover:scale-105 text-blue-300 cursor-pointer'
                       : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
-                  }`}
+                    }`}
                 >
                   <span className="text-[11px] font-bold leading-tight">Undo</span>
                   <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.undo}</span>
@@ -3855,11 +3998,10 @@ export default function App() {
                   onClick={handleMagnet}
                   disabled={boosterInventory.magnet <= 0}
                   title="Magnet: Create a match (works even with empty tray)"
-                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
-                    boosterInventory.magnet > 0
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${boosterInventory.magnet > 0
                       ? 'bg-purple-500/20 border-2 border-purple-500/50 hover:bg-purple-500/30 hover:scale-105 text-purple-300 cursor-pointer'
                       : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
-                  }`}
+                    }`}
                 >
                   <span className="text-[11px] font-bold leading-tight">Magnet</span>
                   <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.magnet}</span>
@@ -3870,11 +4012,10 @@ export default function App() {
                   onClick={handleSwap}
                   disabled={boosterInventory.swap <= 0}
                   title="Swap: Shuffle all icons"
-                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
-                    boosterInventory.swap > 0
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${boosterInventory.swap > 0
                       ? 'bg-amber-500/20 border-2 border-amber-500/50 hover:bg-amber-500/30 hover:scale-105 text-amber-300 cursor-pointer'
                       : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
-                  }`}
+                    }`}
                 >
                   <span className="text-[11px] font-bold leading-tight">Swap</span>
                   <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.swap}</span>
@@ -3885,11 +4026,10 @@ export default function App() {
                   onClick={handleSlotExpand}
                   disabled={boosterInventory.slotExpand <= 0}
                   title="Slot Expand: +1 tray slot"
-                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${
-                    boosterInventory.slotExpand > 0
+                  className={`flex flex-col items-center justify-center min-w-[72px] px-3 py-2 rounded-xl transition-all ${boosterInventory.slotExpand > 0
                       ? 'bg-emerald-500/20 border-2 border-emerald-500/50 hover:bg-emerald-500/30 hover:scale-105 text-emerald-300 cursor-pointer'
                       : 'bg-slate-900/60 border-2 border-slate-700 text-slate-600 cursor-not-allowed'
-                  }`}
+                    }`}
                 >
                   <span className="text-[11px] font-bold leading-tight">Slot+</span>
                   <span className="text-sm font-mono font-black leading-tight mt-0.5">{boosterInventory.slotExpand}</span>
@@ -3900,9 +4040,8 @@ export default function App() {
         </div>
       </div>
 
-      <div className={`bg-slate-900 border-l border-slate-800 flex flex-col h-full overflow-y-auto transition-all duration-300 ${
-        mode === 'play' && !showAnalyticsInPlay 
-          ? 'w-0 p-0 border-l-0 overflow-hidden' 
+      <div className={`bg-slate-900 border-l border-slate-800 flex flex-col h-full overflow-y-auto transition-all duration-300 ${mode === 'play' && !showAnalyticsInPlay
+          ? 'w-0 p-0 border-l-0 overflow-hidden'
           : 'w-80 p-5'
         }`}>
         <div className="flex items-center gap-2 mb-4">
@@ -3927,10 +4066,9 @@ export default function App() {
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-slate-500 text-[9px] uppercase font-bold">Live</span>
-              <span className={`font-mono font-bold text-xs ${
-                Math.abs(parseFloat(mode === 'play' ? (playTiles.filter(t => isTileFree(t, playTiles)).length / Math.max(1, difficultyMods[difficultyMod].variants)).toFixed(2) : difficultyStats.mai) - parseFloat(difficultyStats.mai)) > 0.5
+              <span className={`font-mono font-bold text-xs ${Math.abs(parseFloat(mode === 'play' ? (playTiles.filter(t => isTileFree(t, playTiles)).length / Math.max(1, difficultyMods[difficultyMod].variants)).toFixed(2) : difficultyStats.mai) - parseFloat(difficultyStats.mai)) > 0.5
                   ? 'text-orange-400' : 'text-green-400'
-              }`}>
+                }`}>
                 {mode === 'play'
                   ? (playTiles.filter(t => isTileFree(t, playTiles)).length / Math.max(1, difficultyMods[difficultyMod].variants)).toFixed(2)
                   : difficultyStats.mai}
@@ -3996,42 +4134,134 @@ export default function App() {
 
         <div className="space-y-3">
           <h3 className="text-xs font-bold text-slate-500 uppercase border-b border-slate-800 pb-1">Detailed Metrics</h3>
-          
-          <MetricRow 
-            label="Tile Count Weight" 
-            value={difficultyStats.breakdown.tileCount} 
-            detail={`${(mode === 'play' ? playTiles : tiles).filter(t => !t.isGift).length} total tiles`} 
+
+          <MetricRow
+            label="Tile Count Weight"
+            value={difficultyStats.breakdown.tileCount}
+            detail={`${(mode === 'play' ? playTiles : tiles).filter(t => !t.isGift).length} total tiles`}
           />
-          
-          <MetricRowWithTooltip 
-            label="Theme Icons Weight" 
-            value={difficultyStats.breakdown.icons} 
+
+          <MetricRowWithTooltip
+            label="Theme Icons Weight"
+            value={difficultyStats.breakdown.icons}
             detail={`Ratio: ${iconColorRatio.themeIconRatio}%`}
             isOpen={activeTooltip === 'icons'}
             onToggle={() => setActiveTooltip(activeTooltip === 'icons' ? null : 'icons')}
           >
-            <div className="space-y-1">
-              {Object.keys(difficultyStats.iconQuantities).length === 0 ? (
-                <p className="text-slate-400 italic">No theme icons placed yet.</p>
-              ) : (
-                Object.entries(difficultyStats.iconQuantities).map(([iconName, qty]) => {
-                  const subScore = qty * WEIGHTS.iconCount.theme * (DISTRIBUTION_PATTERNS[distributionPattern]?.iconWeightFactor || 1.1) * (iconColorRatio.themeIconRatio / 100);
-                  return (
-                    <div key={iconName} className="flex justify-between items-center text-[11px]">
-                      <span className="text-slate-300 font-medium">
-                        {themeIconRegistry ? `Icon #${iconName}` : iconName} ({qty}x)
-                      </span>
-                      <span className="font-mono text-amber-400">+{subScore.toFixed(2)}</span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
+            {!themeIconRegistry ? (
+              // Legacy mode — giữ nguyên
+              <div className="space-y-1">
+                {Object.keys(difficultyStats.iconQuantities).length === 0 ? (
+                  <p className="text-slate-400 italic">No theme icons placed yet.</p>
+                ) : (
+                  Object.entries(difficultyStats.iconQuantities).map(([iconName, qty]) => {
+                    const subScore = qty * WEIGHTS.iconCount.theme * (DISTRIBUTION_PATTERNS[distributionPattern]?.iconWeightFactor || 1.1) * (iconColorRatio.themeIconRatio / 100);
+                    return (
+                      <div key={iconName} className="flex justify-between items-center text-[11px]">
+                        <span className="text-slate-300 font-medium">{iconName} ({qty}x)</span>
+                        <span className="font-mono text-amber-400">+{subScore.toFixed(2)}</span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ) : (
+              // Registry mode — table format
+              <div className="w-full">
+                {/* ─── Header + Rows dùng chung 1 grid template ─── */}
+                {/* pr-2 để chừa chỗ cho scrollbar, tránh lệch cột */}
+                <div className="pr-2">
+                  {/* Header */}
+                  <div
+                    className="grid gap-2 text-[9px] text-slate-500 font-bold uppercase mb-1.5 pb-1 border-b border-slate-800"
+                    style={{ gridTemplateColumns: 'minmax(0, 1fr) 36px 36px 36px' }}
+                  >
+                    <div className="text-left">Icon</div>
+                    <div className="text-right">Tiles</div>
+                    <div className="text-right">Bộ</div>
+                    <div className="text-right">Dư</div>
+                  </div>
+
+                  {/* Rows */}
+                  <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
+                    {Object.values(difficultyStats.iconAggregated ?? {})
+                      .sort((a, b) => {
+                        if ((a.remainder > 0) !== (b.remainder > 0)) {
+                          return a.remainder > 0 ? -1 : 1;
+                        }
+                        return b.tiles - a.tiles;
+                      })
+                      .map(a => {
+                        const isUnbalanced = a.remainder !== 0;
+                        const subScore = a.tiles * WEIGHTS.iconCount.theme
+                          * (DISTRIBUTION_PATTERNS[distributionPattern]?.iconWeightFactor || 1.1)
+                          * (iconColorRatio.themeIconRatio / 100);
+                        const uniqueThemes = [...new Set(a.themes)];
+
+                        return (
+                          <div
+                            key={a.iconId}
+                            className={`grid gap-2 items-center px-1 py-0.5 rounded text-[10px] font-mono ${isUnbalanced
+                                ? 'bg-red-950/40 border border-red-800/50'
+                                : 'hover:bg-slate-900/50'
+                              }`}
+                            style={{ gridTemplateColumns: 'minmax(0, 1fr) 36px 36px 36px' }}
+                          >
+                            {/* Cột 1: Theme dots + Icon ID + Sub-score */}
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <div className="flex gap-0.5 shrink-0">
+                                {uniqueThemes.map(t => (
+                                  <div
+                                    key={t}
+                                    className={`w-2 h-2 rounded-full ${THEME_DOT_COLORS[t] || 'bg-slate-500'}`}
+                                    title={t}
+                                  />
+                                ))}
+                              </div>
+                              <span className="text-cyan-400 shrink-0">#{a.iconId}</span>
+                              <span className="text-[9px] text-amber-400 truncate">
+                                +{subScore.toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* Cột 2-4: số, canh phải */}
+                            <div className="text-right text-slate-400 tabular-nums">{a.tiles}</div>
+                            <div className={`text-right font-bold tabular-nums ${isUnbalanced ? 'text-red-400' : 'text-green-400'
+                              }`}>
+                              {a.triplets}
+                            </div>
+                            <div className={`text-right tabular-nums ${isUnbalanced ? 'text-red-400 font-bold' : 'text-slate-600'
+                              }`}>
+                              {a.remainder === 0 ? '—' : a.remainder}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </div>
+
+                {/* Summary footer */}
+                <div className="mt-2 pt-2 border-t border-slate-700/50 flex justify-between text-[10px]">
+                  <span className="text-slate-500">
+                    Tổng: <span className="text-white font-mono font-bold">
+                      {Object.values(difficultyStats.iconAggregated ?? {}).reduce((s, a) => s + a.triplets, 0)}
+                    </span> bộ
+                  </span>
+                  {Object.values(difficultyStats.iconAggregated ?? {}).some(a => a.remainder > 0) ? (
+                    <span className="text-red-400 font-bold">
+                      ⚠ {Object.values(difficultyStats.iconAggregated ?? {}).filter(a => a.remainder > 0).length} lệch
+                    </span>
+                  ) : (
+                    <span className="text-green-400 font-bold">✓ Balanced</span>
+                  )}
+                </div>
+              </div>
+            )}
           </MetricRowWithTooltip>
 
-          <MetricRowWithTooltip 
-            label="Color Variants Weight" 
-            value={difficultyStats.breakdown.colors} 
+          <MetricRowWithTooltip
+            label="Color Variants Weight"
+            value={difficultyStats.breakdown.colors}
             detail={`Ratio: ${iconColorRatio.colorIconRatio}%`}
             isOpen={activeTooltip === 'colors'}
             onToggle={() => setActiveTooltip(activeTooltip === 'colors' ? null : 'colors')}
@@ -4056,9 +4286,9 @@ export default function App() {
           <MetricRow label="Diagonal Covers (Soft)" value={difficultyStats.breakdown.diagCovers} detail={`${difficultyStats.diagCoversCount} diagonal blocks`} />
           <MetricRow label="Stack Covers (Hard)" value={difficultyStats.breakdown.stackCovers} detail={`${difficultyStats.stackCoversCount} direct vertical stacks`} />
 
-          <MetricRowWithTooltip 
-            label="Special Mechanics" 
-            value={difficultyStats.breakdown.mechanics} 
+          <MetricRowWithTooltip
+            label="Special Mechanics"
+            value={difficultyStats.breakdown.mechanics}
             detail="Ice, Chains, Hidden, eventItem"
             isOpen={activeTooltip === 'mechanics'}
             onToggle={() => setActiveTooltip(activeTooltip === 'mechanics' ? null : 'mechanics')}
@@ -4288,7 +4518,7 @@ export default function App() {
                   {Object.entries(themeImportPreview).map(([themeId, icons]) => (
                     <div key={themeId} className="flex justify-between">
                       <span className="text-amber-300">{themeId}</span>
-                      <span className="text-slate-400">{icons.length} icons ({icons[0]}...{icons[icons.length-1]})</span>
+                      <span className="text-slate-400">{icons.length} icons ({icons[0]}...{icons[icons.length - 1]})</span>
                     </div>
                   ))}
                 </div>
@@ -4302,9 +4532,8 @@ export default function App() {
               <button
                 onClick={handleExecuteThemeImport}
                 disabled={!themeImportPreview}
-                className={`flex-1 font-bold py-2.5 rounded-xl text-xs ${
-                  themeImportPreview ? 'bg-purple-500 hover:bg-purple-400 text-slate-950' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                }`}>
+                className={`flex-1 font-bold py-2.5 rounded-xl text-xs ${themeImportPreview ? 'bg-purple-500 hover:bg-purple-400 text-slate-950' : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  }`}>
                 Load Registry
               </button>
             </div>
@@ -4354,7 +4583,7 @@ export default function App() {
       {isImportModalOpen && (
         <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer" onClick={() => setIsImportModalOpen(false)}>
           <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-3xl p-6 shadow-2xl relative cursor-default animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            
+
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-700">
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <Upload className="w-5 h-5 text-purple-400" /> Import Level JSON
@@ -4473,19 +4702,18 @@ export default function App() {
 
             {/* Actions */}
             <div className="flex gap-3 mt-auto pt-3 border-t border-slate-700">
-              <button 
+              <button
                 onClick={() => { setIsImportModalOpen(false); setImportJsonText(''); setImportError(null); setImportPreview(null); }}
                 className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-2.5 rounded-xl transition-all text-xs">
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={handleExecuteImport}
                 disabled={!importPreview}
-                className={`flex-1 flex items-center justify-center gap-2 font-bold py-2.5 rounded-xl transition-all text-xs ${
-                  importPreview 
-                    ? 'bg-purple-500 hover:bg-purple-400 text-slate-950 shadow-lg shadow-purple-500/20' 
+                className={`flex-1 flex items-center justify-center gap-2 font-bold py-2.5 rounded-xl transition-all text-xs ${importPreview
+                    ? 'bg-purple-500 hover:bg-purple-400 text-slate-950 shadow-lg shadow-purple-500/20'
                     : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                }`}>
+                  }`}>
                 <Upload className="w-4 h-4" /> Load into Builder
               </button>
             </div>
@@ -4493,7 +4721,7 @@ export default function App() {
         </div>
       )}
 
-       {isBytesModalOpen && (
+      {isBytesModalOpen && (
         <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 cursor-pointer" onClick={() => setIsBytesModalOpen(false)}>
           <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl p-6 shadow-2xl relative cursor-default animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-700">
@@ -4506,7 +4734,7 @@ export default function App() {
             </div>
 
             <p className="text-xs text-slate-400 mb-3">
-              Format này tuân theo đúng khung của dev để bỏ thẳng vào game engine. 
+              Format này tuân theo đúng khung của dev để bỏ thẳng vào game engine.
               <span className="text-amber-400 font-bold"> Ice, Combined, Chained bị bỏ qua</span> (chưa implement trong engine).
               <span className="text-emerald-400 font-bold"> Hidden → isBackUp</span>,
               <span className="text-emerald-400 font-bold"> EventItem → indexBreakTileStart:0</span>.
@@ -4546,24 +4774,22 @@ export default function App() {
             </div>
 
             <div className="flex gap-3 mt-4 pt-3 border-t border-slate-700">
-              <button 
+              <button
                 onClick={handleCopyBytes}
                 disabled={!!buildBytesPayload._error}
-                className={`flex-1 flex items-center justify-center gap-2 font-bold py-2.5 rounded-xl transition-all text-xs ${
-                  buildBytesPayload._error 
-                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed' 
+                className={`flex-1 flex items-center justify-center gap-2 font-bold py-2.5 rounded-xl transition-all text-xs ${buildBytesPayload._error
+                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
                     : 'bg-slate-700 hover:bg-slate-600 text-white'
-                }`}>
+                  }`}>
                 <Copy className="w-4 h-4" /> Copy to Clipboard
               </button>
-              <button 
+              <button
                 onClick={handleDownloadBytes}
                 disabled={!!buildBytesPayload._error}
-                className={`flex-1 flex items-center justify-center gap-2 font-bold py-2.5 rounded-xl transition-all text-xs ${
-                  buildBytesPayload._error 
-                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed' 
+                className={`flex-1 flex items-center justify-center gap-2 font-bold py-2.5 rounded-xl transition-all text-xs ${buildBytesPayload._error
+                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
                     : 'bg-orange-500 hover:bg-orange-400 text-slate-950 shadow-lg shadow-orange-500/20'
-                }`}>
+                  }`}>
                 <Download className="w-4 h-4" /> Download Level{levelNum}.bytes
               </button>
             </div>
