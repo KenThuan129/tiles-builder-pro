@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/tiles-builder-pro/static/css/main.2de15437.css",
-    "main.js": "/tiles-builder-pro/static/js/main.96080383.js",
+    "main.css": "/tiles-builder-pro/static/css/main.da56a2d5.css",
+    "main.js": "/tiles-builder-pro/static/js/main.a8b263b4.js",
     "static/js/453.ecdeb650.chunk.js": "/tiles-builder-pro/static/js/453.ecdeb650.chunk.js",
     "index.html": "/tiles-builder-pro/index.html",
-    "main.2de15437.css.map": "/tiles-builder-pro/static/css/main.2de15437.css.map",
-    "main.96080383.js.map": "/tiles-builder-pro/static/js/main.96080383.js.map",
+    "main.da56a2d5.css.map": "/tiles-builder-pro/static/css/main.da56a2d5.css.map",
+    "main.a8b263b4.js.map": "/tiles-builder-pro/static/js/main.a8b263b4.js.map",
     "453.ecdeb650.chunk.js.map": "/tiles-builder-pro/static/js/453.ecdeb650.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.2de15437.css",
-    "static/js/main.96080383.js"
+    "static/css/main.da56a2d5.css",
+    "static/js/main.a8b263b4.js"
   ]
 }
