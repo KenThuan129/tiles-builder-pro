@@ -510,6 +510,103 @@ const assignIconsBudgetAware = (tiles, registry, maxIconsTotal, minRepeat = 1) =
   return assignment;
 };
 
+const buildIconAssignmentPlan = (pool, totalTriplets) => {
+  const active = pool.filter(p => p.weight > 0);
+  if (active.length === 0) {
+    throw new Error('Icon pool rỗng hoặc tất cả weight = 0');
+  }
+
+  const totalWeight = active.reduce((s, p) => s + p.weight, 0);
+  if (totalWeight <= 0) {
+    throw new Error('Tổng weight phải > 0');
+  }
+
+  // Step 1: Ideal (fractional) allocation
+  const allocations = active.map(p => ({
+    themeId: p.themeId,
+    iconId: p.iconId,
+    ideal: (p.weight / totalWeight) * totalTriplets,
+    count: Math.floor((p.weight / totalWeight) * totalTriplets),
+  }));
+
+  // Step 2: Distribute remaining slots via largest-remainder
+  const assigned = allocations.reduce((s, a) => s + a.count, 0);
+  const remaining = totalTriplets - assigned;
+
+  // Sort by fractional remainder descending
+  allocations.sort((a, b) => (b.ideal - b.count) - (a.ideal - a.count));
+
+  for (let i = 0; i < remaining; i++) {
+    allocations[i % allocations.length].count += 1;
+  }
+
+  return allocations;
+};
+
+const assignIconsFromPool = (tiles, plan) => {
+  const assignment = new Map(); // tileId → iconId
+  const themeAssignment = new Map(); // tileId → themeId (denormalized)
+
+  // ─── Step 1: Group tiles by triplet ───
+  const groups = new Map(); // gid → { gid, tiles: [] }
+  tiles.forEach(t => {
+    if (t.isGift) return;
+    const gid = t.tripletGroupId || `solo-${t.id}`;
+    if (!groups.has(gid)) groups.set(gid, { gid, tiles: [] });
+    groups.get(gid).tiles.push(t);
+  });
+
+  const groupList = [...groups.values()];
+  const totalGroups = groupList.length;
+
+  // ─── Step 2: Validate plan coverage ───
+  const planTotal = plan.reduce((s, p) => s + p.count, 0);
+  let adjustedPlan = plan;
+
+  if (planTotal !== totalGroups) {
+    console.warn(
+      `[assignIconsFromPool] Plan total (${planTotal}) !== groups (${totalGroups}). Auto-adjusting.`
+    );
+
+    if (plan.length === 0 || totalGroups === 0) {
+      throw new Error('Không thể assign: pool rỗng hoặc board rỗng.');
+    }
+
+    // Rebuild plan từ pool weights cũ, với totalGroups mới
+    const poolFromPlan = plan.map(p => ({
+      themeId: p.themeId,
+      iconId: p.iconId,
+      weight: p.count > 0 ? p.count : 1,   // fallback weight = 1 nếu count = 0
+    }));
+
+    adjustedPlan = buildIconAssignmentPlan(poolFromPlan, totalGroups);
+  }
+
+  // ─── Step 3: Build a flat slot list from plan ───
+  // slots = [{ themeId, iconId }, ...] length = totalGroups
+  const slots = [];
+  adjustedPlan.forEach(p => {
+    for (let i = 0; i < p.count; i++) {
+      slots.push({ themeId: p.themeId, iconId: p.iconId });
+    }
+  });
+
+  // Shuffle slots để tránh vị trí bias (slot đầu tiên luôn vào triplet đầu tiên)
+  const shuffledSlots = [...slots].sort(() => Math.random() - 0.5);
+
+  // ─── Step 4: Assign each triplet vào slot tương ứng ───
+  groupList.forEach((group, idx) => {
+    const slot = shuffledSlots[idx];
+    if (!slot) return;
+    group.tiles.forEach(t => {
+      assignment.set(t.id, slot.iconId);
+      themeAssignment.set(t.id, slot.themeId);
+    });
+  });
+
+  return { assignment, themeAssignment };
+};
+
 const checkComboBalance = (tiles) => {
   const combos = new Map(); // key: `${themeId}_${iconId}` → { themeId, iconId, count }
 
@@ -1073,6 +1170,8 @@ export default function App() {
     theme01: 0,
     theme02: 0,
   });
+  const [distributionMode, setDistributionMode] = useState('theme');
+  const [iconPool, setIconPool] = useState([]);
 
   // Derived: themes with weight > 0, in stable order
   const activeThemes = useMemo(
@@ -1635,29 +1734,82 @@ export default function App() {
 
     if (matchableTiles.length === 0) return;
     if (matchableTiles.length % 3 !== 0) {
-      alert(`Số tile matchable (${matchableTiles.length}) không chia hết cho 3. Không thể redistribute.`);
+      alert(`Số tile matchable (${matchableTiles.length}) không chia hết cho 3.`);
       return;
     }
 
     // ═══════════════════════════════════════════════════════════
-    // STEP 1: Rebuild triplet groups HOÀN TOÀN
+    // STEP 1: Rebuild triplet groups
     // ═══════════════════════════════════════════════════════════
-    // Xóa hết tripletGroupId cũ, gán mới dựa trên shuffle toàn bộ.
     const shuffledTiles = [...matchableTiles].sort(() => Math.random() - 0.5);
     const numTriplets = Math.floor(shuffledTiles.length / 3);
+
+    const rbPrefix = `tg-rb-${Date.now()}`;
     const rebuiltTriplets = shuffledTiles.map((t, idx) => {
       const tripletIdx = Math.floor(idx / 3);
       return {
         ...t,
         tripletGroupId: tripletIdx < numTriplets
-          ? `tg-rb-${Date.now()}-${tripletIdx}`
-          : `tg-rb-orphan-${t.id}`,
+          ? `${rbPrefix}-${tripletIdx}`
+          : `${rbPrefix}-orphan-${t.id}`,
       };
     });
 
+    // ⭐ Fix: Đếm actual groups từ rebuiltTriplets (không từ tiles.length)
+    // để đảm bảo plan build khớp với số group assignIconsFromPool sẽ đếm
+    const actualTripletCount = new Set(
+      rebuiltTriplets.map(t => t.tripletGroupId)
+    ).size;
+
     // ═══════════════════════════════════════════════════════════
-    // STEP 2: Gán theme cho từng triplet
+    // STEP 2: Mode switch
     // ═══════════════════════════════════════════════════════════
+    
+    // ─── ICON DISTRIBUTION MODE (NEW) ───
+    if (themeIconRegistry && distributionMode === 'icon') {
+      if (iconPool.length === 0) {
+        alert('Icon Pool rỗng. Thêm ít nhất 1 icon vào pool.');
+        return;
+      }
+
+      // Validate: mọi entry trong pool phải có icon tồn tại trong registry của theme
+      for (const entry of iconPool) {
+        const pool = themeIconRegistry[entry.themeId] || [];
+        if (!pool.includes(entry.iconId)) {
+          alert(
+            `Icon ${entry.themeId}#${entry.iconId} không có trong registry. ` +
+            `Kiểm tra lại pool.`
+          );
+          return;
+        }
+      }
+
+      // Build plan từ weight
+      let plan;
+      try {
+        plan = buildIconAssignmentPlan(iconPool, actualTripletCount);
+      } catch (e) {
+        alert(`Không thể build plan: ${e.message}`);
+        return;
+      }
+
+      // Assign
+      const { assignment, themeAssignment } = assignIconsFromPool(
+        rebuiltTriplets,
+        plan
+      );
+
+      const themedTiles = rebuiltTriplets.map(t => ({
+        ...t,
+        assignedIconId: assignment.get(t.id) ?? null,
+        themeID: themeAssignment.get(t.id) || t.themeID || 'theme00',
+      }));
+
+      setTiles([...themedTiles, ...giftTiles]);
+      return;
+    }
+
+    // ─── THEME DISTRIBUTION MODE (EXISTING) ───
     const groupIds = [...new Set(rebuiltTriplets.map(t => t.tripletGroupId))];
     let themeQueue;
     if (themeIconRegistry) {
@@ -1684,9 +1836,7 @@ export default function App() {
       themeID: themeByGroup.get(t.tripletGroupId),
     }));
 
-    // ═══════════════════════════════════════════════════════════
-    // STEP 3: Gán icon budget-aware (từ registry)
-    // ═══════════════════════════════════════════════════════════
+    // Step 3: assignIconsBudgetAware (giữ nguyên)
     if (themeIconRegistry) {
       const budget = currentIconBudget;
       const iconAssignment = assignIconsBudgetAware(
@@ -1700,7 +1850,6 @@ export default function App() {
         assignedIconId: iconAssignment.get(t.id) ?? null,
       }));
     } else {
-      // Legacy mode — không có registry thì xóa assignedIconId cũ
       themedTiles = themedTiles.map(t => ({
         ...t,
         assignedIconId: undefined,
@@ -3492,9 +3641,56 @@ export default function App() {
             </div>
 
             {themeIconRegistry && (
+              <div className="bg-slate-950/50 rounded-lg p-2 border border-slate-700/40 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">
+                    Distribution Mode
+                  </span>
+                  <span className="text-[9px] text-slate-500 italic">
+                    {distributionMode === 'icon' ? 'Chọn cặp (theme, icon)' : 'Chọn theme'}
+                  </span>
+                </div>
+                <div className="flex bg-slate-900 rounded p-0.5 border border-slate-700">
+                  <button
+                    onClick={() => setDistributionMode('theme')}
+                    className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${
+                      distributionMode === 'theme'
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Theme
+                  </button>
+                  <button
+                    onClick={() => setDistributionMode('icon')}
+                    className={`flex-1 py-1 rounded text-[10px] font-bold transition-colors ${
+                      distributionMode === 'icon'
+                        ? 'bg-purple-500 text-slate-950'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Icon Pool
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ─── Ghi đè text note dựa theo mode ─── */}
+            {themeIconRegistry && (
               <p className="text-[10px] text-slate-400">
-                Redistribute sẽ dùng theme pool từ registry (không dùng Theme Weights bên dưới).
+                {distributionMode === 'icon'
+                  ? '🟣 Redistribute dùng Icon Pool (weight-based), bỏ qua Icon Budget.'
+                  : '🟡 Redistribute dùng theme pool từ registry (Icon Budget áp dụng).'}
               </p>
+            )}
+
+            {themeIconRegistry && distributionMode === 'icon' && (
+              <IconPoolEditor
+                registry={themeIconRegistry}
+                pool={iconPool}
+                setPool={setIconPool}
+                totalTriplets={Math.floor(tiles.filter(t => !t.isGift).length / 3)}
+              />
             )}
 
             {themeIconRegistry && (() => {
@@ -3518,7 +3714,7 @@ export default function App() {
               );
             })()}
 
-            {themeIconRegistry && (
+            {themeIconRegistry && distributionMode === 'theme' && (
               <div className="bg-slate-950/50 rounded p-2 border border-slate-700/40 space-y-1">
                 <div className="flex items-center justify-between text-[10px]">
                   <span className="text-slate-400 font-bold uppercase">Icon Budget</span>
@@ -3555,7 +3751,7 @@ export default function App() {
               </div>
             )}
 
-            {ALL_THEMES.map(theme => {
+            {distributionMode === 'theme' && ALL_THEMES.map(theme => {
               const weight = themeWeights[theme];
               const isActive = weight > 0;
               const totalWeight = Object.values(themeWeights).reduce((a, b) => a + b, 0);
@@ -3607,7 +3803,7 @@ export default function App() {
               );
             })}
 
-            {activeThemes.length === 1 && (
+            {distributionMode === 'theme' && activeThemes.length === 1 && (
               <p className="text-[10px] text-slate-500 pt-1 border-t border-slate-800">
                 Single theme — all tiles will be <span className="text-amber-300">{activeThemes[0]}</span>
               </p>
@@ -4837,6 +5033,224 @@ function MetricRowWithTooltip({ label, value, detail, isOpen, onToggle, children
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+function IconPoolEditor({ registry, pool, setPool, totalTriplets }) {
+  const [filterTheme, setFilterTheme] = useState('all');
+
+  // Build flat list of all (themeId, iconId) trong registry
+  const allOptions = useMemo(() => {
+    const list = [];
+    Object.entries(registry).forEach(([themeId, icons]) => {
+      icons.forEach(iconId => {
+        list.push({ themeId, iconId });
+      });
+    });
+    return list;
+  }, [registry]);
+
+  // Filter theo theme
+  const filteredOptions = useMemo(() => {
+    if (filterTheme === 'all') return allOptions;
+    return allOptions.filter(o => o.themeId === filterTheme);
+  }, [allOptions, filterTheme]);
+
+  // Pool helpers
+  const addToPool = (themeId, iconId) => {
+    if (pool.some(p => p.themeId === themeId && p.iconId === iconId)) return;
+    setPool([...pool, { themeId, iconId, weight: 10 }]);
+  };
+
+  const removeFromPool = (themeId, iconId) => {
+    setPool(pool.filter(p => !(p.themeId === themeId && p.iconId === iconId)));
+  };
+
+  const updateWeight = (themeId, iconId, weight) => {
+    setPool(pool.map(p =>
+      p.themeId === themeId && p.iconId === iconId
+        ? { ...p, weight: Math.max(1, weight) }
+        : p
+    ));
+  };
+
+  const totalWeight = pool.reduce((s, p) => s + p.weight, 0);
+
+  // Preview allocation
+  const preview = useMemo(() => {
+    if (pool.length === 0 || totalTriplets === 0) return [];
+    try {
+      const active = pool.filter(p => p.weight > 0);
+      if (active.length === 0) return [];
+      const totalW = active.reduce((s, p) => s + p.weight, 0);
+      if (totalW <= 0) return [];
+
+      const allocations = active.map(p => ({
+        themeId: p.themeId,
+        iconId: p.iconId,
+        ideal: (p.weight / totalW) * totalTriplets,
+        count: Math.floor((p.weight / totalW) * totalTriplets),
+      }));
+      const assigned = allocations.reduce((s, a) => s + a.count, 0);
+      const remaining = totalTriplets - assigned;
+      allocations.sort((a, b) => (b.ideal - b.count) - (a.ideal - a.count));
+      for (let i = 0; i < remaining; i++) {
+        allocations[i % allocations.length].count += 1;
+      }
+      return allocations.sort((a, b) => b.count - a.count);
+    } catch {
+      return [];
+    }
+  }, [pool, totalTriplets]);
+
+  return (
+    <div className="bg-purple-950/20 rounded-lg p-2 border border-purple-500/30 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-bold text-purple-300 uppercase">
+          Icon Pool
+        </span>
+        <span className="text-[9px] text-slate-400 font-mono">
+          {pool.length} icons | Σ weight = {totalWeight}
+        </span>
+      </div>
+
+      {/* ─── ADD ICON ─── */}
+      <div className="space-y-1.5">
+        <select
+          value={filterTheme}
+          onChange={(e) => setFilterTheme(e.target.value)}
+          className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[10px] text-white outline-none"
+        >
+          <option value="all">All themes</option>
+          {Object.keys(registry).map(tid => (
+            <option key={tid} value={tid}>{tid}</option>
+          ))}
+        </select>
+
+        {/* Icon grid */}
+        <div className="grid grid-cols-6 gap-1 max-h-32 overflow-y-auto p-1 bg-slate-950/50 rounded border border-slate-800">
+          {filteredOptions.map(o => {
+            const isInPool = pool.some(
+              p => p.themeId === o.themeId && p.iconId === o.iconId
+            );
+            const themeColor = THEME_DOT_COLORS[o.themeId] || 'bg-slate-500';
+            return (
+              <button
+                key={`${o.themeId}_${o.iconId}`}
+                onClick={() => addToPool(o.themeId, o.iconId)}
+                disabled={isInPool}
+                title={`${o.themeId} #${o.iconId}`}
+                className={`relative aspect-square rounded border text-[9px] font-mono flex items-center justify-center transition-all ${
+                  isInPool
+                    ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed'
+                    : 'bg-slate-800 border-slate-700 text-cyan-300 hover:bg-purple-500/20 hover:border-purple-500/50 hover:scale-110 cursor-pointer'
+                }`}
+              >
+                <div className={`absolute top-0.5 left-0.5 w-1.5 h-1.5 rounded-full ${themeColor}`} />
+                {o.iconId}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ─── POOL LIST ─── */}
+      {pool.length === 0 ? (
+        <p className="text-[10px] text-slate-500 italic text-center py-2">
+          Click icon ở trên để thêm vào pool
+        </p>
+      ) : (
+        <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+          {pool.map(p => {
+            const themeColor = THEME_DOT_COLORS[p.themeId] || 'bg-slate-500';
+            const pct = totalWeight > 0
+              ? Math.round((p.weight / totalWeight) * 100)
+              : 0;
+            return (
+              <div
+                key={`${p.themeId}_${p.iconId}`}
+                className="flex items-center gap-1.5 bg-slate-900/60 rounded px-1.5 py-1 border border-slate-800"
+              >
+                <div className={`w-2 h-2 rounded-full ${themeColor} shrink-0`} />
+                <span className="text-[10px] font-mono text-cyan-400 shrink-0">
+                  #{p.iconId}
+                </span>
+                <span className="text-[9px] text-slate-500 truncate flex-1">
+                  {p.themeId}
+                </span>
+                <input
+                  type="number"
+                  min="1"
+                  max="999"
+                  value={p.weight}
+                  onChange={(e) =>
+                    updateWeight(p.themeId, p.iconId, parseInt(e.target.value) || 1)
+                  }
+                  className="w-10 bg-slate-800 border border-slate-700 rounded px-1 py-0.5 text-amber-400 font-mono text-center text-[10px] outline-none focus:border-purple-500"
+                />
+                <span className="text-[9px] text-slate-500 font-mono w-8 text-right">
+                  {pct}%
+                </span>
+                <button
+                  onClick={() => removeFromPool(p.themeId, p.iconId)}
+                  className="text-red-400 hover:text-red-300 text-[11px] font-bold px-0.5 shrink-0"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─── PREVIEW ─── */}
+      {preview.length > 0 && (
+        <div className="bg-slate-950/60 rounded p-2 border border-slate-800 space-y-1">
+          <p className="text-[9px] font-bold text-slate-400 uppercase mb-1">
+            Preview — {totalTriplets} bộ
+          </p>
+          {preview.map(p => {
+            const themeColor = THEME_DOT_COLORS[p.themeId] || 'bg-slate-500';
+            return (
+              <div
+                key={`${p.themeId}_${p.iconId}`}
+                className="flex items-center gap-1.5 text-[10px] font-mono"
+              >
+                <div className={`w-1.5 h-1.5 rounded-full ${themeColor}`} />
+                <span className="text-slate-400">{p.themeId}</span>
+                <span className="text-cyan-400">#{p.iconId}</span>
+                <span className="ml-auto text-green-400 font-bold">
+                  {p.count} bộ
+                </span>
+              </div>
+            );
+          })}
+          <div className="pt-1 mt-1 border-t border-slate-800 flex justify-between text-[9px]">
+            <span className="text-slate-500">Total</span>
+            <span className="text-white font-mono font-bold">
+              {preview.reduce((s, p) => s + p.count, 0)} bộ
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Quick actions */}
+      <div className="flex gap-1.5">
+        <button
+          onClick={() => setPool([])}
+          className="flex-1 text-[9px] font-bold text-red-400 hover:text-red-300 py-1 rounded bg-slate-900 border border-slate-800 hover:border-red-800"
+        >
+          Clear Pool
+        </button>
+        <button
+          onClick={() => setPool(pool.map(p => ({ ...p, weight: 10 })))}
+          disabled={pool.length === 0}
+          className="flex-1 text-[9px] font-bold text-cyan-400 hover:text-cyan-300 py-1 rounded bg-slate-900 border border-slate-800 hover:border-cyan-800 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Equalize
+        </button>
+      </div>
     </div>
   );
 }
